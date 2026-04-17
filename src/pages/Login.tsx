@@ -1,8 +1,38 @@
+import { signInWithPopup } from 'firebase/auth'
+import { doc, setDoc, getDoc } from 'firebase/firestore'
+import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
+import { auth, db, googleProvider } from '@/lib/firebase'
 import { Button } from '@/components/ui/button'
 
 export default function Login() {
-  const handleGoogleSignIn = () => {
-    // TODO: wire up Firebase Google Auth
+  const navigate = useNavigate()
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const result = await signInWithPopup(auth, googleProvider)
+      const user = result.user
+
+      // Save user to Firestore if it's their first time signing in
+      const userRef = doc(db, 'users', user.uid)
+      const userSnap = await getDoc(userRef)
+
+      if (!userSnap.exists()) {
+        await setDoc(userRef, {
+          uid: user.uid,
+          displayName: user.displayName,
+          email: user.email,
+          photoURL: user.photoURL,
+          createdAt: new Date(),
+        })
+      }
+
+      toast.success('Signed in successfully!')
+      navigate('/app/dashboard')
+    } catch (error) {
+      toast.error('Sign in failed. Please try again.')
+      console.error(error)
+    }
   }
 
   return (
