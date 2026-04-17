@@ -58,14 +58,20 @@ export default function LobbyDetail() {
       await updateDoc(lobbyRef, {
         invites: arrayUnion(inviteEmail.trim().toLowerCase()),
       })
-      toast.success(`Invite sent to ${inviteEmail}`)
+      toast.success(`${inviteEmail} added to invite list`)
       setInviteEmail('')
     } catch (error) {
-      toast.error('Failed to send invite.')
+      toast.error('Failed to add invite.')
       console.error(error)
     } finally {
       setInviting(false)
     }
+  }
+
+  const handleCopyLink = () => {
+    const link = `${window.location.origin}/join/${lobby?.id}`
+    navigator.clipboard.writeText(link)
+    toast.success('Invite link copied to clipboard!')
   }
 
   if (loading) {
@@ -126,11 +132,29 @@ export default function LobbyDetail() {
       </div>
 
       {isHost && (
-        <div className="border rounded-xl p-5">
-          <h2 className="font-semibold mb-4">Invite a member</h2>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="invite-email">Email address</Label>
+        <div className="border rounded-xl p-5 flex flex-col gap-5">
+          <div>
+            <h2 className="font-semibold mb-1">Invite link</h2>
+            <p className="text-sm text-muted-foreground mb-3">
+              Share this link with anyone you want to invite. They'll need to sign in with a Google account.
+            </p>
             <div className="flex gap-2">
+              <Input
+                readOnly
+                value={`${window.location.origin}/join/${lobby.id}`}
+                className="text-muted-foreground"
+              />
+              <Button onClick={handleCopyLink}>Copy</Button>
+            </div>
+          </div>
+
+          <div>
+            <h2 className="font-semibold mb-1">Restrict by email</h2>
+            <p className="text-sm text-muted-foreground mb-3">
+              Optionally add specific emails — only those addresses will be allowed to join via the link.
+            </p>
+            <Label htmlFor="invite-email">Email address</Label>
+            <div className="flex gap-2 mt-1.5">
               <Input
                 id="invite-email"
                 type="email"
@@ -140,7 +164,7 @@ export default function LobbyDetail() {
                 onKeyDown={(e) => e.key === 'Enter' && handleInvite()}
               />
               <Button onClick={handleInvite} disabled={!inviteEmail.trim() || inviting}>
-                {inviting ? 'Sending...' : 'Invite'}
+                {inviting ? 'Adding...' : 'Add'}
               </Button>
             </div>
           </div>
