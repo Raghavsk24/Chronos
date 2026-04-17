@@ -6,6 +6,7 @@ import AppLayout from '@/components/AppLayout'
 import Dashboard from '@/pages/app/Dashboard'
 import Lobbies from '@/pages/app/Lobbies'
 import Calendar from '@/pages/app/Calendar'
+import ProtectedRoute from '@/components/ProtectedRoute'
 
 export default function App() {
   return (
@@ -14,7 +15,14 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/app" element={<AppLayout />}>
+        <Route
+          path="/app"
+          element={
+            <ProtectedRoute>
+              <AppLayout />
+            </ProtectedRoute>
+          }
+        >
           <Route index element={<Navigate to="/app/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="lobbies" element={<Lobbies />} />
