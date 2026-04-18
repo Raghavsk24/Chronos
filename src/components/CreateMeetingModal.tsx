@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { collection, addDoc } from 'firebase/firestore'
+import { useState, useEffect } from 'react'
+import { collection, addDoc, getDocs, query, where, doc, getDoc } from 'firebase/firestore'
 import { toast } from 'sonner'
 import { X } from 'lucide-react'
 import { db } from '@/lib/firebase'
@@ -15,6 +15,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+
+interface LobbyOption {
+  id: string
+  name: string
+  memberUids: string[]
+  members: { uid: string; displayName: string; email: string; photoURL: string }[]
+  hostUid: string
+  hostName: string
+}
 
 interface Props {
   onCreated: () => void
@@ -36,16 +45,17 @@ function formatDisplayDate(iso: string): string {
   return `${parseInt(m)}/${parseInt(d)}/${y}`
 }
 
-export default function CreateLobbyModal({ onCreated }: Props) {
+export default function CreateMeetingModal({ onCreated }: Props) {
   const user = useAuthStore((state) => state.user)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [lobbies, setLobbies] = useState<LobbyOption[]>([])
+  const [loadingLobbies, setLoadingLobbies] = useState(false)
 
-  // Group
-  const [lobbyName, setLobbyName] = useState('')
-  const [lobbyDescription, setLobbyDescription] = useState('')
+  // Step 1
+  const [selectedLobbyId, setSelectedLobbyId] = useState('')
 
-  // Meeting
+  // Meeting details
   const [meetingName, setMeetingName] = useState('')
   const [meetingDescription, setMeetingDescription] = useState('')
   const [duration, setDuration] = useState('60')
@@ -58,11 +68,26 @@ export default function CreateLobbyModal({ onCreated }: Props) {
   const [dateInput, setDateInput] = useState('')
   const [extraBuffer, setExtraBuffer] = useState(false)
 
+  useEffect(() => {
+    if (!open || !user) return
+    const fetchLobbies = async () => {
+      setLoadingLobbies(true)
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'lobbies'), where('memberUids', 'array-contains', user.uid))
+        )
+        setLobbies(snap.docs.map((d) => ({ id: d.id, ...d.data() } as LobbyOption)))
+      } finally {
+        setLoadingLobbies(false)
+      }
+    }
+    fetchLobbies()
+  }, [open, user])
+
   const reset = () => {
-    setLobbyName(''); setLobbyDescription(''); setMeetingName('')
-    setMeetingDescription(''); setDuration('60'); setMeetingLink('')
-    setDayPart(null); setTargetingDate(false); setTargetDates([])
-    setDateInput(''); setExtraBuffer(false)
+    setSelectedLobbyId(''); setMeetingName(''); setMeetingDescription('')
+    setDuration('60'); setMeetingLink(''); setDayPart(null)
+    setTargetingDate(false); setTargetDates([]); setDateInput(''); setExtraBuffer(false)
   }
 
   const addTargetDate = () => {
@@ -73,24 +98,12 @@ export default function CreateLobbyModal({ onCreated }: Props) {
   }
 
   const handleCreate = async () => {
-    if (!lobbyName.trim() || !meetingName.trim() || !user) return
+    if (!selectedLobbyId || !meetingName.trim() || !user) return
     setLoading(true)
     try {
-      const hostMember = {
-        uid: user.uid,
-        displayName: user.displayName,
-        email: user.email,
-        photoURL: user.photoURL,
-      }
-      const lobbyRef = await addDoc(collection(db, 'lobbies'), {
-        name: lobbyName.trim(),
-        description: lobbyDescription.trim() || null,
-        hostUid: user.uid,
-        hostName: user.displayName,
-        members: [hostMember],
-        memberUids: [user.uid],
-        createdAt: new Date(),
-      })
+      const lobbySnap = await getDoc(doc(db, 'lobbies', selectedLobbyId))
+      if (!lobbySnap.exists()) { toast.error('Lobby not found.'); return }
+      const lobby = lobbySnap.data() as LobbyOption
 
       const preferences: Record<string, unknown> = {}
       if (dayPart) preferences.dayPart = dayPart
@@ -98,28 +111,28 @@ export default function CreateLobbyModal({ onCreated }: Props) {
       if (extraBuffer) preferences.extraBuffer = true
 
       await addDoc(collection(db, 'meetings'), {
-        lobbyId: lobbyRef.id,
-        lobbyName: lobbyName.trim(),
+        lobbyId: selectedLobbyId,
+        lobbyName: lobby.name,
         name: meetingName.trim(),
         description: meetingDescription.trim() || null,
         duration: Number(duration),
         meetingLink: meetingLink.trim() || null,
         status: 'open',
-        memberUids: [user.uid],
-        members: [hostMember],
-        hostUid: user.uid,
-        hostName: user.displayName,
+        memberUids: lobby.memberUids,
+        members: lobby.members,
+        hostUid: lobby.hostUid,
+        hostName: lobby.hostName,
         preferences: Object.keys(preferences).length > 0 ? preferences : null,
         createdAt: new Date(),
         createdBy: user.uid,
       })
 
-      toast.success('Lobby created!')
+      toast.success('Meeting created!')
       reset()
       setOpen(false)
       onCreated()
     } catch (error) {
-      toast.error('Failed to create lobby.')
+      toast.error('Failed to create meeting.')
       console.error(error)
     } finally {
       setLoading(false)
@@ -132,50 +145,52 @@ export default function CreateLobbyModal({ onCreated }: Props) {
     { value: 'afternoon', label: 'Afternoon' },
   ]
 
-  const canSubmit = lobbyName.trim() && meetingName.trim() && !loading
+  const canSubmit = selectedLobbyId && meetingName.trim() && !loading
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button />}>New Lobby</DialogTrigger>
+      <DialogTrigger render={<Button variant="outline" />}>New Meeting</DialogTrigger>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Create a Lobby</DialogTitle>
+          <DialogTitle>Create a Meeting</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-5 mt-2">
-          {/* Group */}
-          <div className="flex flex-col gap-3">
-            <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">Group</p>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="lobby-name">Lobby name *</Label>
-              <Input id="lobby-name" placeholder="e.g. Design Team" value={lobbyName} onChange={(e) => setLobbyName(e.target.value)} />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="lobby-desc">Description</Label>
-              <textarea
-                id="lobby-desc"
-                rows={2}
-                placeholder="What is this group for?"
-                value={lobbyDescription}
-                onChange={(e) => setLobbyDescription(e.target.value)}
-                className="rounded-lg border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
-              />
-            </div>
+          {/* Lobby selection */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="lobby-select">Select a lobby *</Label>
+            {loadingLobbies ? (
+              <p className="text-sm text-muted-foreground">Loading lobbies...</p>
+            ) : lobbies.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No lobbies found. Create one first.</p>
+            ) : (
+              <select
+                id="lobby-select"
+                value={selectedLobbyId}
+                onChange={(e) => setSelectedLobbyId(e.target.value)}
+                className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+              >
+                <option value="">Choose a lobby...</option>
+                {lobbies.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           <div className="border-t" />
 
-          {/* Meeting */}
+          {/* Meeting details */}
           <div className="flex flex-col gap-3">
-            <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">First Meeting</p>
+            <p className="text-xs font-semibold uppercase text-muted-foreground tracking-wide">Meeting Details</p>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="meeting-name">Meeting name *</Label>
-              <Input id="meeting-name" placeholder="e.g. Project Kickoff" value={meetingName} onChange={(e) => setMeetingName(e.target.value)} />
+              <Label htmlFor="m-name">Meeting name *</Label>
+              <Input id="m-name" placeholder="e.g. Weekly Sync" value={meetingName} onChange={(e) => setMeetingName(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="meeting-desc">Description</Label>
+              <Label htmlFor="m-desc">Description</Label>
               <textarea
-                id="meeting-desc"
+                id="m-desc"
                 rows={2}
                 placeholder="What is this meeting about?"
                 value={meetingDescription}
@@ -185,9 +200,9 @@ export default function CreateLobbyModal({ onCreated }: Props) {
             </div>
             <div className="flex gap-3">
               <div className="flex flex-col gap-1.5 flex-1">
-                <Label htmlFor="duration">Duration</Label>
+                <Label htmlFor="m-duration">Duration</Label>
                 <select
-                  id="duration"
+                  id="m-duration"
                   value={duration}
                   onChange={(e) => setDuration(e.target.value)}
                   className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
@@ -199,8 +214,8 @@ export default function CreateLobbyModal({ onCreated }: Props) {
                 </select>
               </div>
               <div className="flex flex-col gap-1.5 flex-1">
-                <Label htmlFor="meeting-link">Meeting link</Label>
-                <Input id="meeting-link" type="url" placeholder="https://meet.google.com/..." value={meetingLink} onChange={(e) => setMeetingLink(e.target.value)} />
+                <Label htmlFor="m-link">Meeting link</Label>
+                <Input id="m-link" type="url" placeholder="https://meet.google.com/..." value={meetingLink} onChange={(e) => setMeetingLink(e.target.value)} />
               </div>
             </div>
           </div>
@@ -303,7 +318,7 @@ export default function CreateLobbyModal({ onCreated }: Props) {
           </div>
 
           <Button onClick={handleCreate} disabled={!canSubmit}>
-            {loading ? 'Creating...' : 'Create Lobby'}
+            {loading ? 'Creating...' : 'Create Meeting'}
           </Button>
         </div>
       </DialogContent>
