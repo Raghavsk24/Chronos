@@ -97,7 +97,6 @@ export default function Join() {
       const userRef = doc(db, 'users', result.user.uid)
       const userSnap = await getDoc(userRef)
       if (!userSnap.exists()) {
-        const { setDoc } = await import('firebase/firestore')
         await setDoc(userRef, {
           uid: result.user.uid,
           displayName: result.user.displayName,
@@ -108,7 +107,6 @@ export default function Join() {
       }
 
       const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
-      const userRef = doc(db, 'users', result.user.uid)
       await setDoc(userRef, { googleAccessToken: accessToken, tokenUpdatedAt: new Date() }, { merge: true })
 
       await joinLobby(result.user)
