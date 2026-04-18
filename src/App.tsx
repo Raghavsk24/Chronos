@@ -8,6 +8,7 @@ import Lobbies from '@/pages/app/Lobbies'
 import Calendar from '@/pages/app/Calendar'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import LobbyDetail from '@/pages/app/LobbyDetail'
+import Settings from '@/pages/app/Settings'
 import Join from '@/pages/Join'
 
 export default function App() {
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="lobbies" element={<Lobbies />} />
           <Route path="lobbies/:id" element={<LobbyDetail />} />
           <Route path="calendar" element={<Calendar />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
     </BrowserRouter>
