@@ -118,7 +118,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
         description: meetingDescription.trim() || null,
         duration: Number(duration),
         meetingLink: meetingLink.trim() || null,
-        status: 'open',
+        status: 'scheduling',
         memberUids: lobby.memberUids,
         members: lobby.members,
         hostUid: lobby.hostUid,

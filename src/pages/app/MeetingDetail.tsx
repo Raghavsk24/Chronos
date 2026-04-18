@@ -1,14 +1,13 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc } from 'firebase/firestore'
+import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { toast } from 'sonner'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, CheckCircle2 } from 'lucide-react'
 import { db, functions } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { slotDate, slotTime, tzAbbr } from '@/lib/timeUtils'
+import { slotDate, slotTime, tzAbbr, meetingStatusConfig, type MeetingStatus } from '@/lib/timeUtils'
 
 interface Meeting {
   id: string
@@ -18,7 +17,7 @@ interface Meeting {
   description?: string
   duration: number
   meetingLink?: string
-  status: 'open' | 'scheduled'
+  status: MeetingStatus
   scheduledSlot?: { start: string; end: string }
   hostUid: string
   hostName: string
@@ -54,6 +53,7 @@ export default function MeetingDetail() {
   const [scheduleError, setScheduleError] = useState('')
   const [booking, setBooking] = useState(false)
   const [bookingError, setBookingError] = useState('')
+  const [completing, setCompleting] = useState(false)
 
   const fetchMeeting = useCallback(async () => {
     if (!meetingId || !user) return
@@ -113,6 +113,20 @@ export default function MeetingDetail() {
     }
   }
 
+  const handleMarkComplete = async () => {
+    if (!meeting) return
+    setCompleting(true)
+    try {
+      await updateDoc(doc(db, 'meetings', meeting.id), { status: 'completed' })
+      setMeeting({ ...meeting, status: 'completed' })
+      toast.success('Meeting marked as complete.')
+    } catch {
+      toast.error('Failed to mark meeting as complete.')
+    } finally {
+      setCompleting(false)
+    }
+  }
+
   if (loading) return <div className="p-8"><p className="text-muted-foreground">Loading meeting...</p></div>
   if (!meeting) return null
 
@@ -149,16 +163,21 @@ export default function MeetingDetail() {
             </a>
           )}
         </div>
-        <Badge variant={meeting.status === 'scheduled' ? 'default' : 'outline'} className="mt-1 shrink-0 capitalize">
-          {meeting.status}
-        </Badge>
+        {(() => {
+          const { label, className } = meetingStatusConfig(meeting.status)
+          return (
+            <span className={`mt-1 shrink-0 inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${className}`}>
+              {label}
+            </span>
+          )
+        })()}
       </div>
 
       {/* Scheduling */}
       <div className="border rounded-xl p-5 flex flex-col gap-4">
-        {meeting.status === 'scheduled' && meeting.scheduledSlot ? (
+        {meeting.status === 'completed' && meeting.scheduledSlot ? (
           <div>
-            <h2 className="font-semibold mb-1">Meeting scheduled</h2>
+            <h2 className="font-semibold mb-1">Meeting completed</h2>
             <p className="text-sm text-muted-foreground">
               {slotDate(meeting.scheduledSlot.start, userTimezone)}{' '}
               {slotTime(meeting.scheduledSlot.start, userTimezone)}
@@ -166,9 +185,34 @@ export default function MeetingDetail() {
               {slotTime(meeting.scheduledSlot.end, userTimezone)}{' '}
               ({tzAbbr(meeting.scheduledSlot.start, userTimezone)})
             </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Calendar invites were sent to all members.
-            </p>
+          </div>
+        ) : meeting.status === 'scheduled' && meeting.scheduledSlot ? (
+          <div className="flex flex-col gap-3">
+            <div>
+              <h2 className="font-semibold mb-1">Meeting scheduled</h2>
+              <p className="text-sm text-muted-foreground">
+                {slotDate(meeting.scheduledSlot.start, userTimezone)}{' '}
+                {slotTime(meeting.scheduledSlot.start, userTimezone)}
+                {' – '}
+                {slotTime(meeting.scheduledSlot.end, userTimezone)}{' '}
+                ({tzAbbr(meeting.scheduledSlot.start, userTimezone)})
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Calendar invites were sent to all members.
+              </p>
+            </div>
+            {isHost && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-fit gap-2 text-green-700 border-green-200 hover:bg-green-50"
+                onClick={handleMarkComplete}
+                disabled={completing}
+              >
+                <CheckCircle2 className="size-4" />
+                {completing ? 'Marking...' : 'Mark as Complete'}
+              </Button>
+            )}
           </div>
         ) : isHost ? (
           <>

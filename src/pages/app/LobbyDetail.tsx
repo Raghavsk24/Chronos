@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  doc, getDoc, getDocs, updateDoc, deleteDoc,
-  arrayUnion, arrayRemove, collection, query, where,
+  doc, getDoc, getDocs, updateDoc,
+  arrayUnion, arrayRemove, collection, query, where, writeBatch,
 } from 'firebase/firestore'
 import { toast } from 'sonner'
 import { ChevronRight, Pencil, Trash2, LogOut, X } from 'lucide-react'
@@ -11,9 +11,8 @@ import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import CreateMeetingModal from '@/components/CreateMeetingModal'
-import { slotDate, slotTime } from '@/lib/timeUtils'
+import { slotDate, slotTime, meetingStatusConfig, type MeetingStatus } from '@/lib/timeUtils'
 import {
   Dialog,
   DialogContent,
@@ -43,7 +42,7 @@ interface Meeting {
   id: string
   name: string
   duration: number
-  status: 'open' | 'scheduled'
+  status: MeetingStatus
   scheduledSlot?: { start: string; end: string }
 }
 
@@ -121,7 +120,13 @@ export default function LobbyDetail() {
     if (!lobby) return
     setActing(true)
     try {
-      await deleteDoc(doc(db, 'lobbies', lobby.id))
+      const meetingsSnap = await getDocs(
+        query(collection(db, 'meetings'), where('lobbyId', '==', lobby.id))
+      )
+      const batch = writeBatch(db)
+      meetingsSnap.docs.forEach((d) => batch.delete(d.ref))
+      batch.delete(doc(db, 'lobbies', lobby.id))
+      await batch.commit()
       toast.success('Lobby deleted.')
       navigate('/app/dashboard')
     } catch {
@@ -290,30 +295,33 @@ export default function LobbyDetail() {
           <p className="text-sm text-muted-foreground">No meetings yet. Create one to get started.</p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {meetings.map((m) => (
-              <li key={m.id}>
-                <button
-                  onClick={() => navigate(`/app/lobbies/${id}/meetings/${m.id}`)}
-                  className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{m.name}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {m.duration} min
-                      {m.status === 'scheduled' && m.scheduledSlot && (
-                        <> · {slotDate(m.scheduledSlot.start, userTimezone)} {slotTime(m.scheduledSlot.start, userTimezone)}</>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Badge variant={m.status === 'scheduled' ? 'default' : 'outline'}>
-                      {m.status === 'scheduled' ? 'Scheduled' : 'Open'}
-                    </Badge>
-                    <ChevronRight className="size-4 text-muted-foreground" />
-                  </div>
-                </button>
-              </li>
-            ))}
+            {meetings.map((m) => {
+              const { label, className } = meetingStatusConfig(m.status)
+              return (
+                <li key={m.id}>
+                  <button
+                    onClick={() => navigate(`/app/lobbies/${id}/meetings/${m.id}`)}
+                    className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{m.name}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {m.duration} min
+                        {m.scheduledSlot && (
+                          <> · {slotDate(m.scheduledSlot.start, userTimezone)} {slotTime(m.scheduledSlot.start, userTimezone)}</>
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>
+                        {label}
+                      </span>
+                      <ChevronRight className="size-4 text-muted-foreground" />
+                    </div>
+                  </button>
+                </li>
+              )
+            })}
           </ul>
         )}
       </div>

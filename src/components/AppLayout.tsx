@@ -25,12 +25,16 @@ export default function AppLayout() {
         <span className="text-lg font-bold tracking-tight">Chronos</span>
         <button
           onClick={() => setProfileOpen(true)}
-          className="flex items-center gap-2 text-sm font-medium hover:text-foreground text-muted-foreground transition-colors"
+          className="group flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full hover:bg-accent transition-colors"
         >
-          {user?.photoURL && (
-            <img src={user.photoURL} alt={user.displayName ?? ''} className="w-8 h-8 rounded-full" />
+          {user?.photoURL ? (
+            <img src={user.photoURL} alt={user.displayName ?? ''} className="w-7 h-7 rounded-full" />
+          ) : (
+            <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold">
+              {user?.displayName?.[0] ?? '?'}
+            </div>
           )}
-          <span>{user?.displayName}</span>
+          <span className="text-sm font-medium leading-none group-hover:underline truncate max-w-[180px]">{user?.displayName}</span>
         </button>
       </header>
 

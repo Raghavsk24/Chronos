@@ -104,7 +104,7 @@ export default function CreateLobbyModal({ onCreated }: Props) {
         description: meetingDescription.trim() || null,
         duration: Number(duration),
         meetingLink: meetingLink.trim() || null,
-        status: 'open',
+        status: 'scheduling',
         memberUids: [user.uid],
         members: [hostMember],
         hostUid: user.uid,

@@ -9,10 +9,9 @@ import interactionPlugin from '@fullcalendar/interaction'
 import type { EventClickArg } from '@fullcalendar/core'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
-import { Badge } from '@/components/ui/badge'
 import CreateLobbyModal from '@/components/CreateLobbyModal'
 import CreateMeetingModal from '@/components/CreateMeetingModal'
-import { slotDate, slotTime } from '@/lib/timeUtils'
+import { slotDate, slotTime, meetingStatusConfig, type MeetingStatus } from '@/lib/timeUtils'
 
 interface Meeting {
   id: string
@@ -20,14 +19,29 @@ interface Meeting {
   lobbyName: string
   name: string
   duration: number
-  status: 'open' | 'scheduled'
+  status: MeetingStatus
   scheduledSlot?: { start: string; end: string }
+  createdAt?: { seconds: number }
 }
 
 interface Lobby {
   id: string
   name: string
   memberUids: string[]
+}
+
+function sortedMeetings(meetings: Meeting[]): Meeting[] {
+  const order: Record<MeetingStatus, number> = { scheduled: 0, scheduling: 1, completed: 2 }
+  return [...meetings].sort((a, b) => {
+    const orderDiff = order[a.status] - order[b.status]
+    if (orderDiff !== 0) return orderDiff
+    if (a.status === 'scheduled' && a.scheduledSlot && b.scheduledSlot) {
+      return new Date(a.scheduledSlot.start).getTime() - new Date(b.scheduledSlot.start).getTime()
+    }
+    const aTs = a.createdAt?.seconds ?? 0
+    const bTs = b.createdAt?.seconds ?? 0
+    return bTs - aTs
+  })
 }
 
 export default function Dashboard() {
@@ -60,22 +74,17 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const upcomingMeetings = meetings
-    .filter((m) => m.status === 'scheduled' && m.scheduledSlot)
-    .sort((a, b) => {
-      const aTime = new Date(a.scheduledSlot!.start.endsWith('Z') ? a.scheduledSlot!.start : a.scheduledSlot!.start + 'Z').getTime()
-      const bTime = new Date(b.scheduledSlot!.start.endsWith('Z') ? b.scheduledSlot!.start : b.scheduledSlot!.start + 'Z').getTime()
-      return aTime - bTime
-    })
+  const displayMeetings = sortedMeetings(meetings)
 
   const calendarEvents = meetings
-    .filter((m) => m.status === 'scheduled' && m.scheduledSlot)
+    .filter((m) => (m.status === 'scheduled' || m.status === 'completed') && m.scheduledSlot)
     .map((m) => ({
       id: m.id,
       title: m.name,
       start: m.scheduledSlot!.start.endsWith('Z') ? m.scheduledSlot!.start : m.scheduledSlot!.start + 'Z',
       end: m.scheduledSlot!.end.endsWith('Z') ? m.scheduledSlot!.end : m.scheduledSlot!.end + 'Z',
       extendedProps: { lobbyId: m.lobbyId },
+      classNames: m.status === 'completed' ? ['opacity-60'] : [],
     }))
 
   const handleEventClick = (info: EventClickArg) => {
@@ -87,60 +96,66 @@ export default function Dashboard() {
     <div className="flex h-[calc(100vh-3.5rem)] overflow-hidden">
       {/* Left panel */}
       <div className="w-[38%] border-r flex flex-col overflow-hidden shrink-0">
-        {/* Action buttons */}
-        <div className="p-6 pb-4 flex gap-2 border-b shrink-0">
-          <CreateLobbyModal onCreated={fetchData} />
-          <CreateMeetingModal onCreated={fetchData} />
-        </div>
-
         <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6">
-          {/* Upcoming Meetings */}
+          {/* My Meetings */}
           <section>
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Upcoming Meetings
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                My Meetings
+              </h2>
+              <CreateMeetingModal onCreated={fetchData} />
+            </div>
             {loading ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
-            ) : upcomingMeetings.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No scheduled meetings yet.</p>
+            ) : displayMeetings.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No meetings yet.</p>
             ) : (
               <ul className="flex flex-col gap-2">
-                {upcomingMeetings.map((m) => (
-                  <li key={m.id}>
-                    <button
-                      onClick={() => navigate(`/app/lobbies/${m.lobbyId}/meetings/${m.id}`)}
-                      className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{m.name}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {slotDate(m.scheduledSlot!.start, userTimezone)}{' '}
-                          {slotTime(m.scheduledSlot!.start, userTimezone)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{m.lobbyName}</p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant="secondary">Scheduled</Badge>
-                        <ChevronRight className="size-4 text-muted-foreground" />
-                      </div>
-                    </button>
-                  </li>
-                ))}
+                {displayMeetings.map((m) => {
+                  const { label, className } = meetingStatusConfig(m.status)
+                  return (
+                    <li key={m.id}>
+                      <button
+                        onClick={() => navigate(`/app/lobbies/${m.lobbyId}/meetings/${m.id}`)}
+                        className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{m.name}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {m.scheduledSlot
+                              ? `${slotDate(m.scheduledSlot.start, userTimezone)} ${slotTime(m.scheduledSlot.start, userTimezone)}`
+                              : `${m.duration} min`}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{m.lobbyName}</p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>
+                            {label}
+                          </span>
+                          <ChevronRight className="size-4 text-muted-foreground" />
+                        </div>
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </section>
 
           <div className="border-t" />
 
-          {/* All Lobbies */}
+          {/* My Lobbies */}
           <section>
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              All Lobbies
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                My Lobbies
+              </h2>
+              <CreateLobbyModal onCreated={fetchData} />
+            </div>
             {loading ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
             ) : lobbies.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No lobbies yet. Create one above.</p>
+              <p className="text-sm text-muted-foreground">No lobbies yet.</p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {lobbies.map((l) => (
