@@ -11,14 +11,14 @@ from scheduling.algorithm import find_meeting_slots
 
 MAX_WEEKS = 4
 
+# Must be initialized at module level so the callable framework can verify
+# Firebase ID tokens before our function code runs. The GCP metadata server
+# is available in Cloud Run so this completes instantly in production.
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
+
 
 def _get_db():
-    # Initialize on first actual invocation, not at import time.
-    # Calling initialize_app() at module level causes a timeout during
-    # Firebase's local introspection phase because it tries to reach the
-    # GCP metadata server, which doesn't exist outside of GCP.
-    if not firebase_admin._apps:
-        firebase_admin.initialize_app()
     return admin_firestore.client()
 
 
