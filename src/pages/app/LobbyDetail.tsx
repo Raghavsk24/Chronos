@@ -26,6 +26,7 @@ interface Lobby {
   memberUids: string[]
   meetingDuration: number
   status: string
+  scheduledSlot?: { start: string; end: string }
 }
 
 interface Slot {
@@ -38,6 +39,7 @@ interface Slot {
 }
 
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
+const bookMeeting = httpsCallable(functions, 'book_meeting')
 
 export default function LobbyDetail() {
   const { id } = useParams()
@@ -51,6 +53,8 @@ export default function LobbyDetail() {
   const [slots, setSlots] = useState<Slot[]>([])
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
   const [scheduleError, setScheduleError] = useState('')
+  const [booking, setBooking] = useState(false)
+  const [bookingError, setBookingError] = useState('')
 
   useEffect(() => {
     const fetchLobby = async () => {
@@ -113,6 +117,24 @@ export default function LobbyDetail() {
     }
   }
 
+  const handleBook = async () => {
+    if (!lobby || !selectedSlot) return
+    setBooking(true)
+    setBookingError('')
+    try {
+      await bookMeeting({ lobbyId: lobby.id, slotStart: selectedSlot.start, slotEnd: selectedSlot.end })
+      setLobby({ ...lobby, status: 'scheduled', scheduledSlot: { start: selectedSlot.start, end: selectedSlot.end } })
+      setSlots([])
+      setSelectedSlot(null)
+      toast.success('Meeting booked! Calendar invites sent to all members.')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to book meeting.'
+      setBookingError(message)
+    } finally {
+      setBooking(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="p-8">
@@ -170,58 +192,75 @@ export default function LobbyDetail() {
       {/* Scheduling — host only */}
       {isHost && (
         <div className="border rounded-xl p-5 mb-6 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
+          {lobby.status === 'scheduled' && lobby.scheduledSlot ? (
             <div>
-              <h2 className="font-semibold">Find a meeting time</h2>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                Searches everyone's Google Calendar for the next 4 weeks.
-              </p>
-            </div>
-            <Button onClick={handleFindSlots} disabled={finding}>
-              {finding ? 'Searching...' : 'Find Meeting Times'}
-            </Button>
-          </div>
-
-          {scheduleError && (
-            <p className="text-sm text-destructive">{scheduleError}</p>
-          )}
-
-          {slots.length > 0 && (
-            <div className="flex flex-col gap-2">
+              <h2 className="font-semibold mb-1">Meeting scheduled</h2>
               <p className="text-sm text-muted-foreground">
-                Select a time to book:
+                {format(parseISO(lobby.scheduledSlot.start), 'EEEE, MMMM d')} ·{' '}
+                {format(parseISO(lobby.scheduledSlot.start), 'h:mm a')} –{' '}
+                {format(parseISO(lobby.scheduledSlot.end), 'h:mm a')} (UTC)
               </p>
-              {slots.map((slot, i) => {
-                const start = parseISO(slot.start)
-                const end = parseISO(slot.end)
-                const isSelected = selectedSlot?.start === slot.start
-
-                return (
-                  <button
-                    key={i}
-                    onClick={() => setSelectedSlot(slot)}
-                    className={`w-full text-left rounded-lg border p-4 transition-colors ${
-                      isSelected
-                        ? 'border-primary bg-primary/5'
-                        : 'hover:bg-accent'
-                    }`}
-                  >
-                    <p className="font-medium text-sm">
-                      {format(start, 'EEEE, MMMM d')}
-                    </p>
-                    <p className="text-muted-foreground text-sm">
-                      {format(start, 'h:mm a')} – {format(end, 'h:mm a')}
-                    </p>
-                  </button>
-                )
-              })}
-
-              {selectedSlot && (
-                <Button className="mt-2 w-full" disabled>
-                  Confirm {format(parseISO(selectedSlot.start), 'EEEE h:mm a')} (booking coming soon)
-                </Button>
-              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                Calendar invites were sent to all members.
+              </p>
             </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="font-semibold">Find a meeting time</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">
+                    Searches everyone's Google Calendar for the next 4 weeks.
+                  </p>
+                </div>
+                <Button onClick={handleFindSlots} disabled={finding || booking}>
+                  {finding ? 'Searching...' : 'Find Meeting Times'}
+                </Button>
+              </div>
+
+              {scheduleError && (
+                <p className="text-sm text-destructive">{scheduleError}</p>
+              )}
+
+              {slots.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm text-muted-foreground">Select a time to book:</p>
+                  {slots.map((slot, i) => {
+                    const start = parseISO(slot.start)
+                    const end = parseISO(slot.end)
+                    const isSelected = selectedSlot?.start === slot.start
+
+                    return (
+                      <button
+                        key={i}
+                        onClick={() => setSelectedSlot(slot)}
+                        className={`w-full text-left rounded-lg border p-4 transition-colors ${
+                          isSelected ? 'border-primary bg-primary/5' : 'hover:bg-accent'
+                        }`}
+                      >
+                        <p className="font-medium text-sm">{format(start, 'EEEE, MMMM d')}</p>
+                        <p className="text-muted-foreground text-sm">
+                          {format(start, 'h:mm a')} – {format(end, 'h:mm a')}
+                        </p>
+                      </button>
+                    )
+                  })}
+
+                  {selectedSlot && (
+                    <>
+                      {bookingError && (
+                        <p className="text-sm text-destructive">{bookingError}</p>
+                      )}
+                      <Button className="mt-2 w-full" onClick={handleBook} disabled={booking}>
+                        {booking
+                          ? 'Booking...'
+                          : `Confirm ${format(parseISO(selectedSlot.start), 'EEEE h:mm a')}`}
+                      </Button>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}

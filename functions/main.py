@@ -186,3 +186,123 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     )
 
     return result
+
+
+def _create_calendar_event(
+    access_token: str,
+    summary: str,
+    start_iso: str,
+    end_iso: str,
+    attendee_emails: list[str],
+) -> bool:
+    """Create a Google Calendar event on a user's primary calendar."""
+    # Slot strings are naive UTC (e.g. "2026-04-20T14:00:00") — append Z for RFC 3339.
+    start_dt = start_iso if start_iso.endswith('Z') else f'{start_iso}Z'
+    end_dt = end_iso if end_iso.endswith('Z') else f'{end_iso}Z'
+
+    payload = json.dumps({
+        'summary': summary,
+        'start': {'dateTime': start_dt, 'timeZone': 'UTC'},
+        'end':   {'dateTime': end_dt,   'timeZone': 'UTC'},
+        'attendees': [{'email': e} for e in attendee_emails],
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
+        data=payload,
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except urllib.error.HTTPError as e:
+        print(f'Calendar API error {e.code}: {e.read().decode()}')
+        return False
+    except Exception as e:
+        print(f'Calendar event creation failed: {e}')
+        return False
+
+
+@https_fn.on_call()
+def book_meeting(req: https_fn.CallableRequest) -> dict:
+    """
+    Callable Cloud Function that books the chosen slot for a lobby.
+
+    Expected input:
+        { "lobbyId": "...", "slotStart": "2026-04-20T14:00:00", "slotEnd": "2026-04-20T15:00:00" }
+
+    Flow:
+        1. Verify caller is signed in and is the lobby host.
+        2. Fetch each member's access token and email from Firestore.
+        3. Create a Google Calendar event on every member's calendar.
+        4. Update lobby status to 'scheduled' with the booked slot.
+        5. Return { success: true }.
+    """
+    if req.auth is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in to book a meeting.',
+        )
+
+    lobby_id: str = req.data.get('lobbyId', '').strip()
+    slot_start: str = req.data.get('slotStart', '').strip()
+    slot_end: str = req.data.get('slotEnd', '').strip()
+
+    if not lobby_id or not slot_start or not slot_end:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='lobbyId, slotStart, and slotEnd are required.',
+        )
+
+    client = _get_db()
+
+    lobby_doc = client.collection('lobbies').document(lobby_id).get()
+    if not lobby_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message='Lobby not found.',
+        )
+
+    lobby = lobby_doc.to_dict()
+
+    if req.auth.uid != lobby.get('hostUid'):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message='Only the host can book the meeting.',
+        )
+
+    member_uids: list[str] = lobby.get('memberUids', [])
+    summary = f"Meeting: {lobby.get('name', 'Meeting')}"
+
+    attendee_emails: list[str] = []
+    member_tokens: dict[str, str] = {}
+
+    for uid in member_uids:
+        user_doc = client.collection('users').document(uid).get()
+        if not user_doc.exists:
+            continue
+        user_data = user_doc.to_dict() or {}
+        email: str = user_data.get('email', '')
+        token: str = user_data.get('googleAccessToken', '')
+        if email:
+            attendee_emails.append(email)
+        if token:
+            member_tokens[uid] = token
+
+    failed_uids: list[str] = []
+    for uid, token in member_tokens.items():
+        success = _create_calendar_event(token, summary, slot_start, slot_end, attendee_emails)
+        if not success:
+            failed_uids.append(uid)
+
+    client.collection('lobbies').document(lobby_id).update({
+        'status': 'scheduled',
+        'scheduledSlot': {'start': slot_start, 'end': slot_end},
+        'scheduledAt': admin_firestore.SERVER_TIMESTAMP,
+    })
+
+    return {'success': True, 'failedCount': len(failed_uids)}
