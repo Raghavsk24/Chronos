@@ -5,7 +5,6 @@ import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { fetchCalendarTimezone } from '@/lib/calendarTimezone'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -63,16 +62,7 @@ export default function Settings() {
         setWorkEnd(toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0))
         setWorkDays(s.workDays ?? DEFAULT_SETTINGS.workDays)
 
-        if (s.timezone) {
-          setTimezone(s.timezone)
-        } else {
-          // No timezone stored yet — fetch from Google Calendar and save it
-          const token: string = data.googleAccessToken ?? ''
-          const calTz = token ? await fetchCalendarTimezone(token) : ''
-          const resolved = calTz || Intl.DateTimeFormat().resolvedOptions().timeZone
-          setTimezone(resolved)
-          await updateDoc(doc(db, 'users', user.uid), { 'settings.timezone': resolved })
-        }
+        setTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
       }
       setLoading(false)
     }
@@ -186,7 +176,7 @@ export default function Settings() {
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="timezone">Timezone</Label>
           <p className="text-xs text-muted-foreground mb-1">
-            Synced from your Google Calendar on sign-in. Override here if needed.
+            Auto-detected from your device. Override here if needed.
           </p>
           <select
             id="timezone"

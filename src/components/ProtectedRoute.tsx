@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { onAuthStateChanged } from 'firebase/auth'
-import { auth } from '@/lib/firebase'
+import { doc, updateDoc } from 'firebase/firestore'
+import { auth, db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -14,6 +15,10 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       setUser(user)
       setIsAuthenticated(!!user)
       setLoading(false)
+      if (user) {
+        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
+        updateDoc(doc(db, 'users', user.uid), { 'settings.timezone': browserTz }).catch(() => {})
+      }
     })
 
     return unsubscribe
