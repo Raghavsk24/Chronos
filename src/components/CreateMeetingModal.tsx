@@ -27,6 +27,7 @@ interface LobbyOption {
 
 interface Props {
   onCreated: () => void
+  defaultLobbyId?: string
 }
 
 type DayPart = 'morning' | 'midday' | 'afternoon'
@@ -45,7 +46,7 @@ function formatDisplayDate(iso: string): string {
   return `${parseInt(m)}/${parseInt(d)}/${y}`
 }
 
-export default function CreateMeetingModal({ onCreated }: Props) {
+export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props) {
   const user = useAuthStore((state) => state.user)
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -53,7 +54,7 @@ export default function CreateMeetingModal({ onCreated }: Props) {
   const [loadingLobbies, setLoadingLobbies] = useState(false)
 
   // Step 1
-  const [selectedLobbyId, setSelectedLobbyId] = useState('')
+  const [selectedLobbyId, setSelectedLobbyId] = useState(defaultLobbyId ?? '')
 
   // Meeting details
   const [meetingName, setMeetingName] = useState('')
@@ -85,7 +86,7 @@ export default function CreateMeetingModal({ onCreated }: Props) {
   }, [open, user])
 
   const reset = () => {
-    setSelectedLobbyId(''); setMeetingName(''); setMeetingDescription('')
+    setSelectedLobbyId(defaultLobbyId ?? ''); setMeetingName(''); setMeetingDescription('')
     setDuration('60'); setMeetingLink(''); setDayPart(null)
     setTargetingDate(false); setTargetDates([]); setDateInput(''); setExtraBuffer(false)
   }
@@ -156,29 +157,32 @@ export default function CreateMeetingModal({ onCreated }: Props) {
         </DialogHeader>
 
         <div className="flex flex-col gap-5 mt-2">
-          {/* Lobby selection */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="lobby-select">Select a lobby *</Label>
-            {loadingLobbies ? (
-              <p className="text-sm text-muted-foreground">Loading lobbies...</p>
-            ) : lobbies.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No lobbies found. Create one first.</p>
-            ) : (
-              <select
-                id="lobby-select"
-                value={selectedLobbyId}
-                onChange={(e) => setSelectedLobbyId(e.target.value)}
-                className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-              >
-                <option value="">Choose a lobby...</option>
-                {lobbies.map((l) => (
-                  <option key={l.id} value={l.id}>{l.name}</option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          <div className="border-t" />
+          {/* Lobby selection — hidden when a default lobby is pre-selected */}
+          {!defaultLobbyId && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="lobby-select">Select a lobby *</Label>
+                {loadingLobbies ? (
+                  <p className="text-sm text-muted-foreground">Loading lobbies...</p>
+                ) : lobbies.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No lobbies found. Create one first.</p>
+                ) : (
+                  <select
+                    id="lobby-select"
+                    value={selectedLobbyId}
+                    onChange={(e) => setSelectedLobbyId(e.target.value)}
+                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+                  >
+                    <option value="">Choose a lobby...</option>
+                    {lobbies.map((l) => (
+                      <option key={l.id} value={l.id}>{l.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div className="border-t" />
+            </>
+          )}
 
           {/* Meeting details */}
           <div className="flex flex-col gap-3">
