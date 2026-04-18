@@ -8,6 +8,7 @@ import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { slotDate, slotTime, tzAbbr } from '@/lib/timeUtils'
 
 interface Member {
   uid: string
@@ -39,24 +40,6 @@ interface Slot {
 
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
-
-// Slot times are stored as naive UTC ISO strings (no Z). Parse as UTC, format in user's timezone.
-function utcToLocal(isoUtc: string, tz: string, opts: Intl.DateTimeFormatOptions): string {
-  const d = new Date(isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z')
-  return new Intl.DateTimeFormat('en-US', { timeZone: tz, ...opts }).format(d)
-}
-
-function slotDate(isoUtc: string, tz: string) {
-  return utcToLocal(isoUtc, tz, { weekday: 'long', month: 'long', day: 'numeric' })
-}
-
-function slotTime(isoUtc: string, tz: string) {
-  return utcToLocal(isoUtc, tz, { hour: 'numeric', minute: '2-digit', hour12: true })
-}
-
-function tzAbbr(isoUtc: string, tz: string) {
-  return utcToLocal(isoUtc, tz, { timeZoneName: 'short' }).split(' ').pop() ?? ''
-}
 
 export default function LobbyDetail() {
   const { id } = useParams()

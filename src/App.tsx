@@ -5,9 +5,9 @@ import Login from '@/pages/Login'
 import AppLayout from '@/components/AppLayout'
 import Dashboard from '@/pages/app/Dashboard'
 import Lobbies from '@/pages/app/Lobbies'
-import Calendar from '@/pages/app/Calendar'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import LobbyDetail from '@/pages/app/LobbyDetail'
+import MeetingDetail from '@/pages/app/MeetingDetail'
 import Settings from '@/pages/app/Settings'
 import Join from '@/pages/Join'
 
@@ -31,7 +31,7 @@ export default function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="lobbies" element={<Lobbies />} />
           <Route path="lobbies/:id" element={<LobbyDetail />} />
-          <Route path="calendar" element={<Calendar />} />
+          <Route path="lobbies/:lobbyId/meetings/:meetingId" element={<MeetingDetail />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
