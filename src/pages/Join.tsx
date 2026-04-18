@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore'
-import { onAuthStateChanged, signInWithPopup } from 'firebase/auth'
+import { doc, getDoc, updateDoc, setDoc, arrayUnion } from 'firebase/firestore'
+import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
 import { toast } from 'sonner'
 import { auth, db, googleProvider } from '@/lib/firebase'
 import { Button } from '@/components/ui/button'
@@ -106,6 +106,10 @@ export default function Join() {
           createdAt: new Date(),
         })
       }
+
+      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
+      const userRef = doc(db, 'users', result.user.uid)
+      await setDoc(userRef, { googleAccessToken: accessToken, tokenUpdatedAt: new Date() }, { merge: true })
 
       await joinLobby(result.user)
     } catch (error) {

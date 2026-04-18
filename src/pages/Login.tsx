@@ -1,5 +1,5 @@
-import { signInWithPopup } from 'firebase/auth'
-import { doc, setDoc, getDoc } from 'firebase/firestore'
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
+import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { auth, db, googleProvider } from '@/lib/firebase'
@@ -12,8 +12,8 @@ export default function Login() {
     try {
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
+      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
 
-      // Save user to Firestore if it's their first time signing in
       const userRef = doc(db, 'users', user.uid)
       const userSnap = await getDoc(userRef)
 
@@ -26,6 +26,12 @@ export default function Login() {
           createdAt: new Date(),
         })
       }
+
+      // Always refresh the stored token — it expires after 1 hour
+      await updateDoc(userRef, {
+        googleAccessToken: accessToken,
+        tokenUpdatedAt: new Date(),
+      })
 
       toast.success('Signed in successfully!')
       navigate('/app/dashboard')
