@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
+import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
-import { db } from '@/lib/firebase'
+import { db, functions } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,6 +28,17 @@ interface Lobby {
   status: string
 }
 
+interface Slot {
+  start: string
+  end: string
+  score: number
+  position_score: number
+  buffer_score: number
+  buffer_score_avg: number
+}
+
+const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
+
 export default function LobbyDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -34,6 +47,10 @@ export default function LobbyDetail() {
   const [loading, setLoading] = useState(true)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviting, setInviting] = useState(false)
+  const [finding, setFinding] = useState(false)
+  const [slots, setSlots] = useState<Slot[]>([])
+  const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
+  const [scheduleError, setScheduleError] = useState('')
 
   useEffect(() => {
     const fetchLobby = async () => {
@@ -52,10 +69,8 @@ export default function LobbyDetail() {
   const handleInvite = async () => {
     if (!inviteEmail.trim() || !lobby || !user) return
     setInviting(true)
-
     try {
-      const lobbyRef = doc(db, 'lobbies', lobby.id)
-      await updateDoc(lobbyRef, {
+      await updateDoc(doc(db, 'lobbies', lobby.id), {
         invites: arrayUnion(inviteEmail.trim().toLowerCase()),
       })
       toast.success(`${inviteEmail} added to invite list`)
@@ -69,9 +84,33 @@ export default function LobbyDetail() {
   }
 
   const handleCopyLink = () => {
-    const link = `${window.location.origin}/join/${lobby?.id}`
-    navigator.clipboard.writeText(link)
+    navigator.clipboard.writeText(`${window.location.origin}/join/${lobby?.id}`)
     toast.success('Invite link copied to clipboard!')
+  }
+
+  const handleFindSlots = async () => {
+    if (!lobby) return
+    setFinding(true)
+    setSlots([])
+    setSelectedSlot(null)
+    setScheduleError('')
+    try {
+      const result = await scheduleMeeting({ lobbyId: lobby.id })
+      const data = result.data as { slots?: Slot[]; error?: string }
+      if (data.error) {
+        setScheduleError(data.error)
+      } else {
+        setSlots(data.slots ?? [])
+        if (!data.slots?.length) {
+          setScheduleError('No available slots found in the next 4 weeks.')
+        }
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to find meeting times.'
+      setScheduleError(message)
+    } finally {
+      setFinding(false)
+    }
   }
 
   if (loading) {
@@ -105,17 +144,14 @@ export default function LobbyDetail() {
         <span className="text-sm capitalize border rounded-full px-3 py-1">{lobby.status}</span>
       </div>
 
+      {/* Members */}
       <div className="border rounded-xl p-5 mb-6">
         <h2 className="font-semibold mb-4">Members ({lobby.members.length})</h2>
         <ul className="flex flex-col gap-3">
           {lobby.members.map((member) => (
             <li key={member.uid} className="flex items-center gap-3">
               {member.photoURL && (
-                <img
-                  src={member.photoURL}
-                  alt={member.displayName}
-                  className="w-8 h-8 rounded-full"
-                />
+                <img src={member.photoURL} alt={member.displayName} className="w-8 h-8 rounded-full" />
               )}
               <div>
                 <p className="text-sm font-medium">
@@ -131,12 +167,72 @@ export default function LobbyDetail() {
         </ul>
       </div>
 
+      {/* Scheduling — host only */}
+      {isHost && (
+        <div className="border rounded-xl p-5 mb-6 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-semibold">Find a meeting time</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Searches everyone's Google Calendar for the next 4 weeks.
+              </p>
+            </div>
+            <Button onClick={handleFindSlots} disabled={finding}>
+              {finding ? 'Searching...' : 'Find Meeting Times'}
+            </Button>
+          </div>
+
+          {scheduleError && (
+            <p className="text-sm text-destructive">{scheduleError}</p>
+          )}
+
+          {slots.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-muted-foreground">
+                Select a time to book:
+              </p>
+              {slots.map((slot, i) => {
+                const start = parseISO(slot.start)
+                const end = parseISO(slot.end)
+                const isSelected = selectedSlot?.start === slot.start
+
+                return (
+                  <button
+                    key={i}
+                    onClick={() => setSelectedSlot(slot)}
+                    className={`w-full text-left rounded-lg border p-4 transition-colors ${
+                      isSelected
+                        ? 'border-primary bg-primary/5'
+                        : 'hover:bg-accent'
+                    }`}
+                  >
+                    <p className="font-medium text-sm">
+                      {format(start, 'EEEE, MMMM d')}
+                    </p>
+                    <p className="text-muted-foreground text-sm">
+                      {format(start, 'h:mm a')} – {format(end, 'h:mm a')}
+                    </p>
+                  </button>
+                )
+              })}
+
+              {selectedSlot && (
+                <Button className="mt-2 w-full" disabled>
+                  Confirm {format(parseISO(selectedSlot.start), 'EEEE h:mm a')} (booking coming soon)
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Invite controls — host only */}
       {isHost && (
         <div className="border rounded-xl p-5 flex flex-col gap-5">
           <div>
             <h2 className="font-semibold mb-1">Invite link</h2>
             <p className="text-sm text-muted-foreground mb-3">
-              Share this link with anyone you want to invite. They'll need to sign in with a Google account.
+              Share this link with anyone you want to invite.
             </p>
             <div className="flex gap-2">
               <Input
@@ -151,7 +247,7 @@ export default function LobbyDetail() {
           <div>
             <h2 className="font-semibold mb-1">Restrict by email</h2>
             <p className="text-sm text-muted-foreground mb-3">
-              Optionally add specific emails — only those addresses will be allowed to join via the link.
+              Optionally add specific emails — only those addresses will be allowed to join.
             </p>
             <Label htmlFor="invite-email">Email address</Label>
             <div className="flex gap-2 mt-1.5">
