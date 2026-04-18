@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc, updateDoc } from 'firebase/firestore'
+import { doc, getDoc } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { toast } from 'sonner'
 import { ExternalLink } from 'lucide-react'
@@ -77,7 +77,7 @@ export default function MeetingDetail() {
     setSelectedSlot(null)
     setScheduleError('')
     try {
-      const result = await scheduleMeeting({ lobbyId: meeting.lobbyId })
+      const result = await scheduleMeeting({ meetingId: meeting.id })
       const data = result.data as { slots?: Slot[]; error?: string }
       if (data.error) {
         setScheduleError(data.error)
@@ -98,14 +98,9 @@ export default function MeetingDetail() {
     setBookingError('')
     try {
       await bookMeeting({
-        lobbyId: meeting.lobbyId,
+        meetingId: meeting.id,
         slotStart: selectedSlot.start,
         slotEnd: selectedSlot.end,
-      })
-      await updateDoc(doc(db, 'meetings', meeting.id), {
-        status: 'scheduled',
-        scheduledSlot: { start: selectedSlot.start, end: selectedSlot.end },
-        scheduledAt: new Date(),
       })
       setMeeting({ ...meeting, status: 'scheduled', scheduledSlot: { start: selectedSlot.start, end: selectedSlot.end } })
       setSlots([])

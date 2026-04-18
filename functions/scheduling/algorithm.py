@@ -5,8 +5,8 @@ Finds and ranks available meeting slots across all participants,
 respecting individual work hours, work days, buffer times, and calendar conflicts.
 """
 
-from datetime import datetime, timedelta, time as dtime, timezone
-from typing import List, Dict, Tuple
+from datetime import datetime, timedelta, time as dtime, timezone, date as ddate
+from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
@@ -60,26 +60,36 @@ def _score_position(
     slot_end: datetime,
     day_start: datetime,
     day_end: datetime,
+    day_part: Optional[str] = None,
 ) -> float:
     """
-    Score how close the slot's midpoint is to the shared workday midpoint (UTC).
+    Score the slot's position within the shared work window.
 
-    1.0 = perfect centre, 0.0 = at the very edge of the work window.
+    day_part controls the preference:
+      None / 'midday' : highest score at centre (default)
+      'morning'       : highest score at start of window
+      'afternoon'     : highest score at end of window
     """
     ws = _minutes_since_midnight(day_start)
     we = _minutes_since_midnight(day_end)
-    workday_midpoint = (ws + we) / 2
+    window_length = we - ws
+    if window_length == 0:
+        return 1.0
 
     slot_midpoint = (
         _minutes_since_midnight(slot_start) + _minutes_since_midnight(slot_end)
     ) / 2
 
-    half_workday = (we - ws) / 2
-    if half_workday == 0:
-        return 1.0
+    # Normalized position: 0.0 = start of window, 1.0 = end of window
+    normalized = max(0.0, min(1.0, (slot_midpoint - ws) / window_length))
 
-    distance_from_centre = abs(slot_midpoint - workday_midpoint)
-    return max(0.0, 1.0 - (distance_from_centre / half_workday))
+    if day_part == 'morning':
+        return 1.0 - normalized
+    elif day_part == 'afternoon':
+        return normalized
+    else:
+        # Midday (default): peak at centre
+        return 1.0 - abs(0.5 - normalized) * 2
 
 
 def _score_buffer_for_participant(
@@ -157,6 +167,7 @@ def find_meeting_slots(
     position_weight: float = 0.5,
     buffer_weight: float = 0.5,
     top_n: int = 5,
+    preferences: Optional[dict] = None,
 ) -> dict:
     """
     Find and rank available meeting slots for all participants.
@@ -215,7 +226,26 @@ def find_meeting_slots(
     """
 
     # -----------------------------------------------------------------------
-    # Change 2: Compute intersection of work days across all participants
+    # Extract scheduling preferences
+    # -----------------------------------------------------------------------
+    prefs = preferences or {}
+    day_part: Optional[str] = prefs.get('dayPart')  # 'morning' | 'midday' | 'afternoon' | None
+
+    # extraBuffer: add 30 min to effective duration so the slot search
+    # accounts for meetings running over time.
+    if prefs.get('extraBuffer'):
+        meeting_duration_minutes += 30
+
+    # targetDates: restrict search to specific calendar dates only.
+    target_dates: set[ddate] = set()
+    for d_str in (prefs.get('targetDates') or []):
+        try:
+            target_dates.add(ddate.fromisoformat(d_str))
+        except ValueError:
+            pass
+
+    # -----------------------------------------------------------------------
+    # Compute intersection of work days across all participants
     # -----------------------------------------------------------------------
     if not work_days_by_participant:
         return {'error': 'No participants provided.'}
@@ -281,7 +311,11 @@ def find_meeting_slots(
 
         while current_day < week_end:
 
-            # Change 2: Only process days in the common work days intersection
+            # Skip days not in target_dates when a specific date list is provided
+            if target_dates and current_day.date() not in target_dates:
+                current_day += timedelta(days=1)
+                continue
+
             if current_day.weekday() in work_days:
                 # Convert each participant's local work hours to UTC for this day,
                 # then intersect (latest start, earliest end) to get the shared window.
@@ -319,7 +353,7 @@ def find_meeting_slots(
 
                     if not has_conflict:
                         pos_score = _score_position(
-                            candidate_start, candidate_end, day_start, day_end
+                            candidate_start, candidate_end, day_start, day_end, day_part
                         )
 
                         buf_min, buf_avg = _score_buffer_all_participants(

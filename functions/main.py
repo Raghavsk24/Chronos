@@ -12,8 +12,7 @@ from scheduling.algorithm import find_meeting_slots
 MAX_WEEKS = 4
 
 # Must be initialized at module level so the callable framework can verify
-# Firebase ID tokens before our function code runs. The GCP metadata server
-# is available in Cloud Run so this completes instantly in production.
+# Firebase ID tokens before our function code runs.
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
 
@@ -23,11 +22,7 @@ def _get_db():
 
 
 def _to_naive_utc(iso_str: str) -> str:
-    """Convert an ISO 8601 string (with or without timezone) to a naive UTC ISO string.
-
-    The scheduling algorithm uses naive datetimes, so timezone info must be
-    stripped. We normalise to UTC first so the comparison is consistent.
-    """
+    """Convert an ISO 8601 string (with or without timezone) to a naive UTC ISO string."""
     dt = datetime.fromisoformat(iso_str)
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
@@ -38,7 +33,7 @@ def _fetch_busy_slots(access_token: str, search_start: datetime) -> list[dict] |
     """Call the Google Calendar FreeBusy API for a user's primary calendar.
 
     Returns a list of {'start': str, 'end': str} dicts on success,
-    or None if the token is expired / invalid (caller should ask user to re-login).
+    or None if the token is expired / invalid.
     """
     time_min = search_start.replace(tzinfo=timezone.utc).isoformat()
     time_max = (search_start + timedelta(weeks=MAX_WEEKS)).replace(tzinfo=timezone.utc).isoformat()
@@ -81,16 +76,16 @@ def _fetch_busy_slots(access_token: str, search_start: datetime) -> list[dict] |
 @https_fn.on_call()
 def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     """
-    Callable Cloud Function that runs the scheduling algorithm for a lobby.
+    Callable Cloud Function that runs the scheduling algorithm for a meeting.
 
     Expected input:
-        { "lobbyId": "<Firestore lobby document ID>" }
+        { "meetingId": "<Firestore meeting document ID>" }
 
     Flow:
         1. Verify the caller is signed in.
-        2. Fetch the lobby document to get memberUids and meetingDuration.
-        3. Fetch each member's settings + Google Calendar busy slots from Firestore.
-        4. Run the scheduling algorithm.
+        2. Fetch the meeting document for memberUids, duration, and preferences.
+        3. Fetch each member's settings + Google Calendar busy slots.
+        4. Run the scheduling algorithm (passing preferences).
         5. Return { slots: [...] } or { error: "..." }.
     """
     if req.auth is None:
@@ -99,30 +94,31 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             message='You must be signed in to schedule a meeting.',
         )
 
-    lobby_id: str = req.data.get('lobbyId', '').strip()
-    if not lobby_id:
+    meeting_id: str = req.data.get('meetingId', '').strip()
+    if not meeting_id:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-            message='lobbyId is required.',
+            message='meetingId is required.',
         )
 
     client = _get_db()
     search_start = datetime.now()
 
-    # --- 1. Fetch lobby ---
-    lobby_doc = client.collection('lobbies').document(lobby_id).get()
-    if not lobby_doc.exists:
+    # --- 1. Fetch meeting ---
+    meeting_doc = client.collection('meetings').document(meeting_id).get()
+    if not meeting_doc.exists:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.NOT_FOUND,
-            message='Lobby not found.',
+            message='Meeting not found.',
         )
 
-    lobby = lobby_doc.to_dict()
-    member_uids: list[str] = lobby.get('memberUids', [])
-    meeting_duration: int = lobby.get('meetingDuration', 60)
+    meeting = meeting_doc.to_dict()
+    member_uids: list[str] = meeting.get('memberUids', [])
+    meeting_duration: int = meeting.get('duration', 60)
+    preferences: dict = meeting.get('preferences') or {}
 
     if not member_uids:
-        return {'error': 'Lobby has no members.'}
+        return {'error': 'Meeting has no members.'}
 
     # --- 2. Fetch each member's settings and calendar busy slots ---
     busy_slots_by_participant: dict = {}
@@ -140,7 +136,6 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         settings: dict = user_data.get('settings', {})
         access_token: str = user_data.get('googleAccessToken', '')
 
-        # Fetch real calendar busy slots
         if access_token:
             busy = _fetch_busy_slots(access_token, search_start)
             if busy is None:
@@ -150,9 +145,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             busy = []
 
         busy_slots_by_participant[uid] = busy
-
         buffer_by_participant[uid] = settings.get('bufferMinutes', 15)
-
         work_hours_by_participant[uid] = {
             'start_hour':   settings.get('workStartHour', 9),
             'start_minute': settings.get('workStartMinute', 0),
@@ -160,7 +153,6 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             'end_minute':   settings.get('workEndMinute', 0),
             'timezone':     settings.get('timezone', 'UTC'),
         }
-
         work_days_by_participant[uid] = settings.get('workDays', [0, 1, 2, 3, 4])
 
     if not work_days_by_participant:
@@ -184,6 +176,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         meeting_duration_minutes=meeting_duration,
         search_start=search_start,
         max_weeks=MAX_WEEKS,
+        preferences=preferences,
     )
 
     return result
@@ -197,7 +190,6 @@ def _create_calendar_event(
     attendee_emails: list[str],
 ) -> bool:
     """Create a Google Calendar event on a user's primary calendar."""
-    # Slot strings are naive UTC (e.g. "2026-04-20T14:00:00") — append Z for RFC 3339.
     start_dt = start_iso if start_iso.endswith('Z') else f'{start_iso}Z'
     end_dt = end_iso if end_iso.endswith('Z') else f'{end_iso}Z'
 
@@ -231,16 +223,16 @@ def _create_calendar_event(
 @https_fn.on_call()
 def book_meeting(req: https_fn.CallableRequest) -> dict:
     """
-    Callable Cloud Function that books the chosen slot for a lobby.
+    Callable Cloud Function that books the chosen slot for a meeting.
 
     Expected input:
-        { "lobbyId": "...", "slotStart": "2026-04-20T14:00:00", "slotEnd": "2026-04-20T15:00:00" }
+        { "meetingId": "...", "slotStart": "2026-04-20T14:00:00", "slotEnd": "2026-04-20T15:00:00" }
 
     Flow:
-        1. Verify caller is signed in and is the lobby host.
-        2. Fetch each member's access token and email from Firestore.
+        1. Verify caller is signed in and is the meeting host.
+        2. Fetch each member's access token and email.
         3. Create a Google Calendar event on every member's calendar.
-        4. Update lobby status to 'scheduled' with the booked slot.
+        4. Update meeting status to 'scheduled' with the booked slot.
         5. Return { success: true }.
     """
     if req.auth is None:
@@ -249,35 +241,35 @@ def book_meeting(req: https_fn.CallableRequest) -> dict:
             message='You must be signed in to book a meeting.',
         )
 
-    lobby_id: str = req.data.get('lobbyId', '').strip()
+    meeting_id: str = req.data.get('meetingId', '').strip()
     slot_start: str = req.data.get('slotStart', '').strip()
     slot_end: str = req.data.get('slotEnd', '').strip()
 
-    if not lobby_id or not slot_start or not slot_end:
+    if not meeting_id or not slot_start or not slot_end:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-            message='lobbyId, slotStart, and slotEnd are required.',
+            message='meetingId, slotStart, and slotEnd are required.',
         )
 
     client = _get_db()
 
-    lobby_doc = client.collection('lobbies').document(lobby_id).get()
-    if not lobby_doc.exists:
+    meeting_doc = client.collection('meetings').document(meeting_id).get()
+    if not meeting_doc.exists:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.NOT_FOUND,
-            message='Lobby not found.',
+            message='Meeting not found.',
         )
 
-    lobby = lobby_doc.to_dict()
+    meeting = meeting_doc.to_dict()
 
-    if req.auth.uid != lobby.get('hostUid'):
+    if req.auth.uid != meeting.get('hostUid'):
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
             message='Only the host can book the meeting.',
         )
 
-    member_uids: list[str] = lobby.get('memberUids', [])
-    summary = f"Meeting: {lobby.get('name', 'Meeting')}"
+    member_uids: list[str] = meeting.get('memberUids', [])
+    summary = meeting.get('name', 'Meeting')
 
     attendee_emails: list[str] = []
     member_tokens: dict[str, str] = {}
@@ -300,7 +292,7 @@ def book_meeting(req: https_fn.CallableRequest) -> dict:
         if not success:
             failed_uids.append(uid)
 
-    client.collection('lobbies').document(lobby_id).update({
+    client.collection('meetings').document(meeting_id).update({
         'status': 'scheduled',
         'scheduledSlot': {'start': slot_start, 'end': slot_end},
         'scheduledAt': admin_firestore.SERVER_TIMESTAMP,
