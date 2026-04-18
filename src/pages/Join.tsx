@@ -4,6 +4,7 @@ import { doc, getDoc, updateDoc, setDoc, arrayUnion } from 'firebase/firestore'
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
 import { toast } from 'sonner'
 import { auth, db, googleProvider } from '@/lib/firebase'
+import { fetchCalendarTimezone } from '@/lib/calendarTimezone'
 import { Button } from '@/components/ui/button'
 import { type User } from 'firebase/auth'
 
@@ -107,7 +108,12 @@ export default function Join() {
       }
 
       const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
-      await setDoc(userRef, { googleAccessToken: accessToken, tokenUpdatedAt: new Date() }, { merge: true })
+      const calendarTz = await fetchCalendarTimezone(accessToken)
+      await updateDoc(userRef, {
+        googleAccessToken: accessToken,
+        tokenUpdatedAt: new Date(),
+        ...(calendarTz && { 'settings.timezone': calendarTz }),
+      })
 
       await joinLobby(result.user)
     } catch (error) {

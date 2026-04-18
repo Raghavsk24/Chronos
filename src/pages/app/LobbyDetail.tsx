@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { doc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
-import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
 import { db, functions } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
@@ -41,6 +40,24 @@ interface Slot {
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
 
+// Slot times are stored as naive UTC ISO strings (no Z). Parse as UTC, format in user's timezone.
+function utcToLocal(isoUtc: string, tz: string, opts: Intl.DateTimeFormatOptions): string {
+  const d = new Date(isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z')
+  return new Intl.DateTimeFormat('en-US', { timeZone: tz, ...opts }).format(d)
+}
+
+function slotDate(isoUtc: string, tz: string) {
+  return utcToLocal(isoUtc, tz, { weekday: 'long', month: 'long', day: 'numeric' })
+}
+
+function slotTime(isoUtc: string, tz: string) {
+  return utcToLocal(isoUtc, tz, { hour: 'numeric', minute: '2-digit', hour12: true })
+}
+
+function tzAbbr(isoUtc: string, tz: string) {
+  return utcToLocal(isoUtc, tz, { timeZoneName: 'short' }).split(' ').pop() ?? ''
+}
+
 export default function LobbyDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -55,16 +72,24 @@ export default function LobbyDetail() {
   const [scheduleError, setScheduleError] = useState('')
   const [booking, setBooking] = useState(false)
   const [bookingError, setBookingError] = useState('')
+  const [userTimezone, setUserTimezone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone
+  )
 
   useEffect(() => {
     const fetchLobby = async () => {
-      if (!id) return
-      const snap = await getDoc(doc(db, 'lobbies', id))
-      if (!snap.exists()) {
+      if (!id || !user) return
+      const [lobbySnap, userSnap] = await Promise.all([
+        getDoc(doc(db, 'lobbies', id)),
+        getDoc(doc(db, 'users', user.uid)),
+      ])
+      if (!lobbySnap.exists()) {
         navigate('/app/lobbies')
         return
       }
-      setLobby({ id: snap.id, ...snap.data() } as Lobby)
+      setLobby({ id: lobbySnap.id, ...lobbySnap.data() } as Lobby)
+      const tz = userSnap.data()?.settings?.timezone
+      if (tz) setUserTimezone(tz)
       setLoading(false)
     }
     fetchLobby()
@@ -196,9 +221,10 @@ export default function LobbyDetail() {
             <div>
               <h2 className="font-semibold mb-1">Meeting scheduled</h2>
               <p className="text-sm text-muted-foreground">
-                {format(parseISO(lobby.scheduledSlot.start), 'EEEE, MMMM d')} ·{' '}
-                {format(parseISO(lobby.scheduledSlot.start), 'h:mm a')} –{' '}
-                {format(parseISO(lobby.scheduledSlot.end), 'h:mm a')} (UTC)
+                {slotDate(lobby.scheduledSlot.start, userTimezone)} ·{' '}
+                {slotTime(lobby.scheduledSlot.start, userTimezone)} –{' '}
+                {slotTime(lobby.scheduledSlot.end, userTimezone)}{' '}
+                ({tzAbbr(lobby.scheduledSlot.start, userTimezone)})
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 Calendar invites were sent to all members.
@@ -226,8 +252,6 @@ export default function LobbyDetail() {
                 <div className="flex flex-col gap-2">
                   <p className="text-sm text-muted-foreground">Select a time to book:</p>
                   {slots.map((slot, i) => {
-                    const start = parseISO(slot.start)
-                    const end = parseISO(slot.end)
                     const isSelected = selectedSlot?.start === slot.start
 
                     return (
@@ -238,9 +262,10 @@ export default function LobbyDetail() {
                           isSelected ? 'border-primary bg-primary/5' : 'hover:bg-accent'
                         }`}
                       >
-                        <p className="font-medium text-sm">{format(start, 'EEEE, MMMM d')}</p>
+                        <p className="font-medium text-sm">{slotDate(slot.start, userTimezone)}</p>
                         <p className="text-muted-foreground text-sm">
-                          {format(start, 'h:mm a')} – {format(end, 'h:mm a')}
+                          {slotTime(slot.start, userTimezone)} – {slotTime(slot.end, userTimezone)}{' '}
+                          ({tzAbbr(slot.start, userTimezone)})
                         </p>
                       </button>
                     )
@@ -254,7 +279,7 @@ export default function LobbyDetail() {
                       <Button className="mt-2 w-full" onClick={handleBook} disabled={booking}>
                         {booking
                           ? 'Booking...'
-                          : `Confirm ${format(parseISO(selectedSlot.start), 'EEEE h:mm a')}`}
+                          : `Confirm ${slotDate(selectedSlot.start, userTimezone)} ${slotTime(selectedSlot.start, userTimezone)}`}
                       </Button>
                     </>
                   )}

@@ -158,6 +158,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             'start_minute': settings.get('workStartMinute', 0),
             'end_hour':     settings.get('workEndHour', 17),
             'end_minute':   settings.get('workEndMinute', 0),
+            'timezone':     settings.get('timezone', 'UTC'),
         }
 
         work_days_by_participant[uid] = settings.get('workDays', [0, 1, 2, 3, 4])

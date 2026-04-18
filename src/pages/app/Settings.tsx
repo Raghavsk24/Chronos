@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
 import { toast } from 'sonner'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { fetchCalendarTimezone } from '@/lib/calendarTimezone'
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
@@ -14,6 +15,27 @@ const DEFAULT_SETTINGS = {
   workEnd: '17:00',
   workDays: [0, 1, 2, 3, 4],
 }
+
+// Full IANA timezone list with UTC offset labels, sorted west→east
+const _now = new Date()
+const TIMEZONES = Intl.supportedValuesOf('timeZone')
+  .map((tz) => {
+    const offsetStr =
+      new Intl.DateTimeFormat('en', { timeZone: tz, timeZoneName: 'shortOffset' })
+        .formatToParts(_now)
+        .find((p) => p.type === 'timeZoneName')?.value ?? 'GMT'
+    return { value: tz, label: `(${offsetStr}) ${tz.replace(/_/g, ' ')}`, offsetStr }
+  })
+  .sort((a, b) => {
+    const toMins = (s: string) => {
+      if (s === 'GMT') return 0
+      const m = s.match(/GMT([+-])(\d+)(?::(\d+))?/)
+      if (!m) return 0
+      return (m[1] === '+' ? 1 : -1) * (parseInt(m[2]) * 60 + parseInt(m[3] ?? '0'))
+    }
+    const diff = toMins(a.offsetStr) - toMins(b.offsetStr)
+    return diff !== 0 ? diff : a.value.localeCompare(b.value)
+  })
 
 function toTimeString(hour: number, minute: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
@@ -25,6 +47,7 @@ export default function Settings() {
   const [workStart, setWorkStart] = useState(DEFAULT_SETTINGS.workStart)
   const [workEnd, setWorkEnd] = useState(DEFAULT_SETTINGS.workEnd)
   const [workDays, setWorkDays] = useState<number[]>(DEFAULT_SETTINGS.workDays)
+  const [timezone, setTimezone] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -33,12 +56,22 @@ export default function Settings() {
     const fetchSettings = async () => {
       const snap = await getDoc(doc(db, 'users', user.uid))
       if (snap.exists()) {
-        const s = snap.data().settings
-        if (s) {
-          setBufferMinutes(s.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes)
-          setWorkStart(toTimeString(s.workStartHour ?? 9, s.workStartMinute ?? 0))
-          setWorkEnd(toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0))
-          setWorkDays(s.workDays ?? DEFAULT_SETTINGS.workDays)
+        const data = snap.data()
+        const s = data.settings ?? {}
+        setBufferMinutes(s.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes)
+        setWorkStart(toTimeString(s.workStartHour ?? 9, s.workStartMinute ?? 0))
+        setWorkEnd(toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0))
+        setWorkDays(s.workDays ?? DEFAULT_SETTINGS.workDays)
+
+        if (s.timezone) {
+          setTimezone(s.timezone)
+        } else {
+          // No timezone stored yet — fetch from Google Calendar and save it
+          const token: string = data.googleAccessToken ?? ''
+          const calTz = token ? await fetchCalendarTimezone(token) : ''
+          const resolved = calTz || Intl.DateTimeFormat().resolvedOptions().timeZone
+          setTimezone(resolved)
+          await updateDoc(doc(db, 'users', user.uid), { 'settings.timezone': resolved })
         }
       }
       setLoading(false)
@@ -79,6 +112,7 @@ export default function Settings() {
             workEndHour: endHour,
             workEndMinute: endMinute,
             workDays,
+            timezone,
           },
         },
         { merge: true }
@@ -147,6 +181,25 @@ export default function Settings() {
               className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
             />
           </div>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="timezone">Timezone</Label>
+          <p className="text-xs text-muted-foreground mb-1">
+            Synced from your Google Calendar on sign-in. Override here if needed.
+          </p>
+          <select
+            id="timezone"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            className="rounded-lg border border-input bg-background px-2.5 py-1 text-sm w-72"
+          >
+            {TIMEZONES.map((tz) => (
+              <option key={tz.value} value={tz.value}>
+                {tz.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="flex flex-col gap-1.5">

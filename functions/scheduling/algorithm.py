@@ -5,9 +5,10 @@ Finds and ranks available meeting slots across all participants,
 respecting individual work hours, work days, buffer times, and calendar conflicts.
 """
 
-from datetime import datetime, timedelta, time as dtime
+from datetime import datetime, timedelta, time as dtime, timezone
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 
 # ---------------------------------------------------------------------------
@@ -57,20 +58,16 @@ def _minutes_since_midnight(dt: datetime) -> float:
 def _score_position(
     slot_start: datetime,
     slot_end: datetime,
-    work_start: dtime,
-    work_end: dtime,
+    day_start: datetime,
+    day_end: datetime,
 ) -> float:
     """
-    Score how close the slot's midpoint is to the shared workday midpoint.
-
-    Uses the computed work_start (latest start across all participants) and
-    work_end (earliest end across all participants) so the midpoint reflects
-    the actual shared window — not any one person's schedule.
+    Score how close the slot's midpoint is to the shared workday midpoint (UTC).
 
     1.0 = perfect centre, 0.0 = at the very edge of the work window.
     """
-    ws = work_start.hour * 60 + work_start.minute
-    we = work_end.hour * 60 + work_end.minute
+    ws = _minutes_since_midnight(day_start)
+    we = _minutes_since_midnight(day_end)
     workday_midpoint = (ws + we) / 2
 
     slot_midpoint = (
@@ -89,8 +86,8 @@ def _score_buffer_for_participant(
     slot_start: datetime,
     slot_end: datetime,
     participant_slots: List[TimeSlot],
-    work_start: dtime,
-    work_end: dtime,
+    day_start: datetime,
+    day_end: datetime,
 ) -> float:
     """
     Score the breathing room around a slot from one participant's perspective.
@@ -99,9 +96,6 @@ def _score_buffer_for_participant(
     padding is not double-counted. Measures the gap between the candidate
     slot and the participant's nearest events on each side.
     """
-    day = slot_start.date()
-    day_start = datetime.combine(day, work_start)
-    day_end = datetime.combine(day, work_end)
 
     # Nearest busy event ending before our slot (fallback: start of work window)
     prev_end = day_start
@@ -128,8 +122,8 @@ def _score_buffer_all_participants(
     slot_start: datetime,
     slot_end: datetime,
     busy_by_participant_original: Dict[str, List[TimeSlot]],
-    work_start: dtime,
-    work_end: dtime,
+    day_start: datetime,
+    day_end: datetime,
 ) -> Tuple[float, float]:
     """
     Calculate buffer scores for every participant, then return:
@@ -140,7 +134,7 @@ def _score_buffer_all_participants(
         return 1.0, 1.0
 
     scores = [
-        _score_buffer_for_participant(slot_start, slot_end, slots, work_start, work_end)
+        _score_buffer_for_participant(slot_start, slot_end, slots, day_start, day_end)
         for slots in busy_by_participant_original.values()
     ]
 
@@ -242,32 +236,6 @@ def find_meeting_slots(
 
     work_days = sorted(common_work_days)
 
-    # -----------------------------------------------------------------------
-    # Change 3: Compute shared work window (latest start, earliest end)
-    # -----------------------------------------------------------------------
-    latest_start_minutes = max(
-        h['start_hour'] * 60 + h['start_minute']
-        for h in work_hours_by_participant.values()
-    )
-    earliest_end_minutes = min(
-        h['end_hour'] * 60 + h['end_minute']
-        for h in work_hours_by_participant.values()
-    )
-
-    shared_window_minutes = earliest_end_minutes - latest_start_minutes
-
-    if shared_window_minutes < meeting_duration_minutes:
-        return {
-            'error': (
-                f'The shared work hours window across all participants is only '
-                f'{shared_window_minutes} minutes, which is shorter than the required '
-                f'meeting duration of {meeting_duration_minutes} minutes. '
-                f'Ask participants to review and update their work hour settings.'
-            )
-        }
-
-    work_start = dtime(latest_start_minutes // 60, latest_start_minutes % 60)
-    work_end = dtime(earliest_end_minutes // 60, earliest_end_minutes % 60)
     meeting_duration = timedelta(minutes=meeting_duration_minutes)
 
     # -----------------------------------------------------------------------
@@ -315,32 +283,49 @@ def find_meeting_slots(
 
             # Change 2: Only process days in the common work days intersection
             if current_day.weekday() in work_days:
-                day_start = datetime.combine(current_day.date(), work_start)
-                day_end = datetime.combine(current_day.date(), work_end)
+                # Convert each participant's local work hours to UTC for this day,
+                # then intersect (latest start, earliest end) to get the shared window.
+                utc_starts = []
+                utc_ends = []
+                for wh in work_hours_by_participant.values():
+                    tz = ZoneInfo(wh.get('timezone', 'UTC'))
+                    local_start = datetime(
+                        current_day.year, current_day.month, current_day.day,
+                        wh['start_hour'], wh['start_minute'], tzinfo=tz,
+                    )
+                    local_end = datetime(
+                        current_day.year, current_day.month, current_day.day,
+                        wh['end_hour'], wh['end_minute'], tzinfo=tz,
+                    )
+                    utc_starts.append(local_start.astimezone(timezone.utc).replace(tzinfo=None))
+                    utc_ends.append(local_end.astimezone(timezone.utc).replace(tzinfo=None))
+
+                day_start = max(utc_starts)
+                day_end = min(utc_ends)
+
+                if (day_end - day_start).total_seconds() / 60 < meeting_duration_minutes:
+                    current_day += timedelta(days=1)
+                    continue
+
                 candidate_start = day_start
 
-                # Change 3: Inner loop bounded by shared work_start / work_end
                 while candidate_start + meeting_duration <= day_end:
                     candidate_end = candidate_start + meeting_duration
                     candidate = TimeSlot(start=candidate_start, end=candidate_end)
 
-                    # Change 4: Use pre-expanded busy list — no extra buffer needed here
                     has_conflict = any(
                         candidate.overlaps(busy) for busy in all_busy_expanded
                     )
 
                     if not has_conflict:
-                        # Change 5: Position score uses the shared work_start / work_end
                         pos_score = _score_position(
-                            candidate_start, candidate_end, work_start, work_end
+                            candidate_start, candidate_end, day_start, day_end
                         )
 
-                        # Change 6: Buffer score = minimum across all participants
-                        #           Tiebreaker = average across all participants
                         buf_min, buf_avg = _score_buffer_all_participants(
                             candidate_start, candidate_end,
                             busy_by_participant_original,
-                            work_start, work_end,
+                            day_start, day_end,
                         )
 
                         final_score = (

@@ -3,6 +3,7 @@ import { doc, setDoc, getDoc, updateDoc } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { auth, db, googleProvider } from '@/lib/firebase'
+import { fetchCalendarTimezone } from '@/lib/calendarTimezone'
 import { Button } from '@/components/ui/button'
 
 export default function Login() {
@@ -27,10 +28,12 @@ export default function Login() {
         })
       }
 
-      // Always refresh the stored token — it expires after 1 hour
+      const calendarTz = await fetchCalendarTimezone(accessToken)
+
       await updateDoc(userRef, {
         googleAccessToken: accessToken,
         tokenUpdatedAt: new Date(),
+        ...(calendarTz && { 'settings.timezone': calendarTz }),
       })
 
       toast.success('Signed in successfully!')
