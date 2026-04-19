@@ -117,7 +117,7 @@ export default function Dashboard() {
                     <li key={m.id}>
                       <button
                         onClick={() => navigate(`/app/lobbies/${m.lobbyId}/meetings/${m.id}`)}
-                        className="w-full flex items-center justify-between gap-3 rounded-lg border-2 p-3 text-left hover:bg-muted/50 transition-colors"
+                        className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
                       >
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{m.name}</p>
@@ -162,7 +162,7 @@ export default function Dashboard() {
                   <li key={l.id}>
                     <button
                       onClick={() => navigate(`/app/lobbies/${l.id}`)}
-                      className="w-full flex items-center justify-between gap-3 rounded-lg border-2 p-3 text-left hover:bg-muted/50 transition-colors"
+                      className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
                     >
                       <div className="min-w-0">
                         <p className="text-sm font-medium truncate">{l.name}</p>

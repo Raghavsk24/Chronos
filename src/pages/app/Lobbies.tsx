@@ -61,7 +61,7 @@ interface StatCardProps {
 
 function StatCard({ label, count, colorClass }: StatCardProps) {
   return (
-    <div className={`flex-1 rounded-lg border-2 px-4 py-3 flex items-center gap-3 ${colorClass ?? ''}`}>
+    <div className={`flex-1 rounded-lg border px-4 py-3 flex items-center gap-3 ${colorClass ?? ''}`}>
       <span className="text-2xl font-bold tabular-nums">{count}</span>
       <span className="text-sm font-medium leading-tight">{label}</span>
     </div>
@@ -247,7 +247,7 @@ export default function Lobbies() {
                 <div
                   key={lobby.id}
                   onClick={() => navigate(`/app/lobbies/${lobby.id}`)}
-                  className="border-2 rounded-xl p-5 cursor-pointer hover:bg-muted/30 transition-colors"
+                  className="border rounded-xl p-5 cursor-pointer hover:bg-muted/30 transition-colors"
                 >
                   {/* Name + description */}
                   <h2 className="text-xl font-bold tracking-tight leading-snug">{lobby.name}</h2>
