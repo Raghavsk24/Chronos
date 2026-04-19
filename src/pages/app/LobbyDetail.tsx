@@ -250,7 +250,7 @@ export default function LobbyDetail() {
       </div>
 
       {/* Members */}
-      <div className="border rounded-xl p-5 mb-6">
+      <div className="border-2 rounded-xl p-5 mb-6">
         <h2 className="font-semibold mb-4">Members ({lobby.members.length})</h2>
         <ul className="flex flex-col gap-3">
           {lobby.members.map((member) => (
@@ -284,7 +284,7 @@ export default function LobbyDetail() {
       </div>
 
       {/* Meetings */}
-      <div className="border rounded-xl p-5 mb-6">
+      <div className="border-2 rounded-xl p-5 mb-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold">Meetings ({meetings.length})</h2>
           {isHost && (
@@ -301,7 +301,7 @@ export default function LobbyDetail() {
                 <li key={m.id}>
                   <button
                     onClick={() => navigate(`/app/lobbies/${id}/meetings/${m.id}`)}
-                    className="w-full flex items-center justify-between gap-3 rounded-lg border p-3 text-left hover:bg-muted/50 transition-colors"
+                    className="w-full flex items-center justify-between gap-3 rounded-lg border-2 p-3 text-left hover:bg-muted/50 transition-colors"
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">{m.name}</p>
@@ -328,7 +328,7 @@ export default function LobbyDetail() {
 
       {/* Invite — host only */}
       {isHost && (
-        <div className="border rounded-xl p-5 flex flex-col gap-5">
+        <div className="border-2 rounded-xl p-5 flex flex-col gap-5">
           <div>
             <h2 className="font-semibold mb-1">Invite link</h2>
             <p className="text-sm text-muted-foreground mb-3">

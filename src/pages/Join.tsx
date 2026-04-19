@@ -143,7 +143,7 @@ export default function Join() {
 
   return (
     <div className="min-h-screen flex items-center justify-center">
-      <div className="w-full max-w-sm p-8 rounded-xl border bg-card shadow-sm flex flex-col gap-6 text-center">
+      <div className="w-full max-w-sm p-8 rounded-xl border-2 bg-card shadow-sm flex flex-col gap-6 text-center">
         <div>
           <p className="text-sm text-muted-foreground mb-1">You've been invited to join</p>
           <h1 className="text-2xl font-bold tracking-tight">{lobby.name}</h1>

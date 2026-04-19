@@ -174,7 +174,7 @@ export default function MeetingDetail() {
       </div>
 
       {/* Scheduling */}
-      <div className="border rounded-xl p-5 flex flex-col gap-4">
+      <div className="border-2 rounded-xl p-5 flex flex-col gap-4">
         {meeting.status === 'completed' && meeting.scheduledSlot ? (
           <div>
             <h2 className="font-semibold mb-1">Meeting completed</h2>
@@ -239,7 +239,7 @@ export default function MeetingDetail() {
                     <button
                       key={i}
                       onClick={() => setSelectedSlot(slot)}
-                      className={`w-full text-left rounded-lg border p-4 transition-colors ${
+                      className={`w-full text-left rounded-lg border-2 p-4 transition-colors ${
                         isSelected ? 'border-primary bg-primary/5' : 'hover:bg-accent'
                       }`}
                     >

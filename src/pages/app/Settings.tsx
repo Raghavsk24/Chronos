@@ -173,7 +173,7 @@ export default function Settings() {
             title="Availability"
             description="Controls when meetings can be scheduled for you."
           >
-            <div className="border rounded-xl divide-y">
+            <div className="border-2 rounded-xl divide-y">
 
               {/* Work days */}
               <div className="p-4 flex flex-col gap-2">
@@ -185,7 +185,7 @@ export default function Settings() {
                       key={i}
                       type="button"
                       onClick={() => toggleDay(i)}
-                      className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                      className={`px-3 py-1.5 rounded-md text-sm font-medium border-2 transition-colors ${
                         workDays.includes(i)
                           ? 'bg-primary text-primary-foreground border-primary'
                           : 'bg-background text-muted-foreground border-input hover:bg-accent hover:text-accent-foreground'
@@ -206,14 +206,14 @@ export default function Settings() {
                     type="time"
                     value={workStart}
                     onChange={(e) => setWorkStart(e.target.value)}
-                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+                    className="h-8 rounded-lg border-2 border-input bg-background px-2.5 text-sm"
                   />
                   <span className="text-sm text-muted-foreground">to</span>
                   <input
                     type="time"
                     value={workEnd}
                     onChange={(e) => setWorkEnd(e.target.value)}
-                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+                    className="h-8 rounded-lg border-2 border-input bg-background px-2.5 text-sm"
                   />
                 </div>
               </div>
@@ -226,7 +226,7 @@ export default function Settings() {
                   id="buffer"
                   value={bufferMinutes}
                   onChange={(e) => setBufferMinutes(Number(e.target.value))}
-                  className="h-8 w-40 rounded-lg border border-input bg-background px-2.5 text-sm mt-1"
+                  className="h-8 w-40 rounded-lg border-2 border-input bg-background px-2.5 text-sm mt-1"
                 >
                   <option value={0}>None</option>
                   <option value={5}>5 minutes</option>
@@ -246,7 +246,7 @@ export default function Settings() {
                   id="timezone"
                   value={timezone}
                   onChange={(e) => setTimezone(e.target.value)}
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm w-72 mt-1"
+                  className="h-8 rounded-lg border-2 border-input bg-background px-2.5 text-sm w-72 mt-1"
                 >
                   {TIMEZONES.map((tz) => (
                     <option key={tz.value} value={tz.value}>{tz.label}</option>
@@ -267,7 +267,7 @@ export default function Settings() {
             title="Account"
             description="Manage your account and data."
           >
-            <div className="border rounded-xl p-4 flex items-center justify-between gap-4">
+            <div className="border-2 rounded-xl p-4 flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium">Delete account</p>
                 <p className="text-xs text-muted-foreground mt-0.5">

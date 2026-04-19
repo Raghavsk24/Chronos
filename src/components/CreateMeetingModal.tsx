@@ -171,7 +171,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                     id="lobby-select"
                     value={selectedLobbyId}
                     onChange={(e) => setSelectedLobbyId(e.target.value)}
-                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+                    className="h-8 rounded-lg border-2 border-input bg-background px-2.5 text-sm"
                   >
                     <option value="">Choose a lobby...</option>
                     {lobbies.map((l) => (
@@ -199,7 +199,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                 placeholder="What is this meeting about?"
                 value={meetingDescription}
                 onChange={(e) => setMeetingDescription(e.target.value)}
-                className="rounded-lg border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+                className="rounded-lg border-2 border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
             <div className="flex gap-3">
@@ -209,7 +209,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                   id="m-duration"
                   value={duration}
                   onChange={(e) => setDuration(e.target.value)}
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
+                  className="h-8 rounded-lg border-2 border-input bg-background px-2.5 text-sm"
                 >
                   <option value="30">30 min</option>
                   <option value="60">1 hour</option>
@@ -238,7 +238,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                     key={value}
                     type="button"
                     onClick={() => setDayPart((prev) => prev === value ? null : value)}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium border transition-colors ${
+                    className={`px-3 py-1.5 rounded-md text-sm font-medium border-2 transition-colors ${
                       dayPart === value
                         ? 'bg-primary text-primary-foreground border-primary'
                         : 'bg-background text-muted-foreground border-input hover:bg-accent hover:text-accent-foreground'
@@ -256,7 +256,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                 <button
                   type="button"
                   onClick={() => setTargetingDate((v) => !v)}
-                  className={`relative inline-flex h-5 w-9 rounded-full border-2 border-transparent transition-colors ${
+                  className={`relative inline-flex h-5 w-9 rounded-full border-3 border-transparent transition-colors ${
                     targetingDate ? 'bg-primary' : 'bg-muted'
                   }`}
                 >
@@ -308,7 +308,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
               <button
                 type="button"
                 onClick={() => setExtraBuffer((v) => !v)}
-                className={`relative inline-flex h-5 w-9 rounded-full border-2 border-transparent transition-colors ${
+                className={`relative inline-flex h-5 w-9 rounded-full border-3 border-transparent transition-colors ${
                   extraBuffer ? 'bg-primary' : 'bg-muted'
                 }`}
               >
