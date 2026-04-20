@@ -21,3 +21,4 @@ export const googleProvider = new GoogleAuthProvider()
 
 googleProvider.addScope('https://www.googleapis.com/auth/calendar.readonly')
 googleProvider.addScope('https://www.googleapis.com/auth/calendar.events')
+googleProvider.setCustomParameters({ access_type: 'offline', prompt: 'consent' })

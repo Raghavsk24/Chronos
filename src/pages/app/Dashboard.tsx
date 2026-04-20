@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { CalendarDays, ChevronLeft, ChevronRight, Users } from 'lucide-react'
-import { addMonths, format, isSameDay, startOfMonth } from 'date-fns'
+import { addMonths, endOfMonth, endOfWeek, format, isSameDay, isWithinInterval, startOfMonth, startOfWeek } from 'date-fns'
 import type { DayButtonProps } from 'react-day-picker'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
@@ -131,6 +131,61 @@ export default function Dashboard() {
     [meetingCountsByDay]
   )
 
+  const stats = useMemo(() => {
+    const now = new Date()
+    const weekStart = startOfWeek(now, { weekStartsOn: 1 })
+    const weekEnd = endOfWeek(now, { weekStartsOn: 1 })
+    const monthStart = startOfMonth(now)
+    const monthEnd = endOfMonth(now)
+
+    const thisWeek = scheduledMeetings.filter((m) => {
+      const d = parseUtcDate(m.scheduledSlot!.start)
+      return isWithinInterval(d, { start: weekStart, end: weekEnd })
+    }).length
+
+    const thisMonth = scheduledMeetings.filter((m) => {
+      const d = parseUtcDate(m.scheduledSlot!.start)
+      return isWithinInterval(d, { start: monthStart, end: monthEnd })
+    }).length
+
+    const allMemberUids = new Set<string>()
+    lobbies.forEach((l) => l.memberUids.forEach((uid) => allMemberUids.add(uid)))
+    allMemberUids.delete(user?.uid ?? '')
+    const teamMembers = allMemberUids.size
+
+    const countByLobby = (status: string) => {
+      const map = new Map<string, number>()
+      meetings.filter((m) => m.status === status).forEach((m) => {
+        map.set(m.lobbyId, (map.get(m.lobbyId) ?? 0) + 1)
+      })
+      return map
+    }
+
+    const pickTopLobby = (map: Map<string, number>): string | null => {
+      let topName: string | null = null
+      let max = 0
+      map.forEach((count, lobbyId) => {
+        if (count > max) {
+          max = count
+          topName = lobbies.find((l) => l.id === lobbyId)?.name ?? null
+        }
+      })
+      return topName
+    }
+
+    const starLobbyName =
+      pickTopLobby(countByLobby('completed')) ??
+      pickTopLobby(countByLobby('scheduled')) ??
+      pickTopLobby(countByLobby('scheduling')) ??
+      '—'
+
+    const completedCount = meetings.filter((m) => m.status === 'completed').length
+    const rawHours = (completedCount * 30) / 60
+    const hoursSaved = rawHours % 1 === 0 ? String(rawHours) : rawHours.toFixed(1)
+
+    return { thisWeek, thisMonth, teamMembers, starLobbyName, hoursSaved }
+  }, [scheduledMeetings, meetings, lobbies, user?.uid])
+
   const displayMeetings = sortedMeetings(meetings)
   const visibleMeetings = useMemo(
     () => displayMeetings.slice(0, visibleMeetingCount),
@@ -150,6 +205,34 @@ export default function Dashboard() {
   return (
     <div className="h-full min-h-0 overflow-y-auto p-4 md:p-6">
       <div className="min-h-full flex flex-col gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {loading ? (
+            Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="rounded-xl border bg-muted/50 h-[78px] animate-pulse" />
+            ))
+          ) : (
+            <>
+              {[
+                { value: stats.thisWeek, label: 'Meetings this week' },
+                { value: stats.thisMonth, label: 'Meetings this month' },
+                { value: stats.teamMembers, label: 'Team members' },
+                { value: `${stats.hoursSaved}h`, label: 'Hours saved scheduling' },
+              ].map(({ value, label }) => (
+                <div key={label} className="rounded-xl border bg-muted/50 px-4 py-3.5 flex flex-col gap-0.5">
+                  <p className="text-3xl font-bold text-foreground leading-none">{value}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{label}</p>
+                </div>
+              ))}
+              <div className="rounded-xl border bg-muted/50 px-4 py-3.5 flex flex-col justify-between">
+                <p className="text-lg font-bold text-foreground leading-tight truncate" title={stats.starLobbyName}>
+                  {stats.starLobbyName}
+                </p>
+                <p className="text-xs text-muted-foreground">Star lobby</p>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="grid gap-4 lg:grid-cols-[minmax(320px,40%)_1fr]">
           <div className="min-h-0 rounded-2xl border bg-card flex flex-col overflow-hidden">
             <div className="px-4 py-3.5 md:px-5 border-b">

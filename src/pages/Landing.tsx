@@ -1,12 +1,13 @@
 import { Link } from 'react-router-dom'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import ChronosLogo from '@/components/ChronosLogo'
 
 export default function Landing() {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="flex items-center justify-between px-8 py-4 border-b">
-        <h1 className="text-2xl font-bold tracking-tight">Chronos</h1>
+        <ChronosLogo height={32} />
         <div className="flex gap-3">
           <Link to="/login" className={cn(buttonVariants({ variant: 'ghost' }))}>
             Log in

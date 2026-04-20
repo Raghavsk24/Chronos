@@ -68,6 +68,7 @@ def _seed_db(host_token='host-token'):
                     'hostUid': 'host-uid',
                     'memberUids': ['host-uid', 'member-uid'],
                     'name': 'Core Sync',
+                    'meetingLink': 'https://meet.google.com/abc-defg-hij',
                     'status': 'scheduling',
                 }
             },
@@ -201,3 +202,30 @@ def test_book_meeting_impl_raises_when_host_token_missing():
         )
 
     assert exc_info.value.code == https_fn.FunctionsErrorCode.FAILED_PRECONDITION
+
+
+def test_book_meeting_impl_passes_meeting_link_to_calendar_event():
+    db = _seed_db()
+    captured = {}
+
+    def _fake_create_event(token, summary, slot_start, slot_end, attendee_emails, meeting_link):
+        captured['token'] = token
+        captured['summary'] = summary
+        captured['slot_start'] = slot_start
+        captured['slot_end'] = slot_end
+        captured['attendee_emails'] = attendee_emails
+        captured['meeting_link'] = meeting_link
+        return True
+
+    main._book_meeting_impl(
+        data={
+            'meetingId': 'm1',
+            'slotStart': '2026-05-01T10:00:00',
+            'slotEnd': '2026-05-01T11:00:00',
+        },
+        auth_uid='host-uid',
+        client=db,
+        create_event_fn=_fake_create_event,
+    )
+
+    assert captured['meeting_link'] == 'https://meet.google.com/abc-defg-hij'

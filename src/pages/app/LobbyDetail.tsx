@@ -194,10 +194,10 @@ export default function LobbyDetail() {
     if (!lobby || !user) return
     setActing(true)
     try {
-      const me = lobby.members.find((m) => m.uid === user.uid)
+      const updatedMembers = lobby.members.filter((m) => m.uid !== user.uid)
       await updateDoc(doc(db, 'lobbies', lobby.id), {
         memberUids: arrayRemove(user.uid),
-        members: arrayRemove(me),
+        members: updatedMembers,
       })
       toast.success('You left the lobby.')
       navigate('/app/lobbies')
@@ -211,13 +211,14 @@ export default function LobbyDetail() {
     if (!lobby) return
     setRemovingUid(member.uid)
     try {
+      const updatedMembers = lobby.members.filter((m) => m.uid !== member.uid)
       await updateDoc(doc(db, 'lobbies', lobby.id), {
         memberUids: arrayRemove(member.uid),
-        members: arrayRemove(member),
+        members: updatedMembers,
       })
       setLobby({
         ...lobby,
-        members: lobby.members.filter((m) => m.uid !== member.uid),
+        members: updatedMembers,
         memberUids: lobby.memberUids.filter((u) => u !== member.uid),
       })
       toast.success(`${member.displayName} removed.`)
@@ -247,10 +248,11 @@ export default function LobbyDetail() {
         setMeetings((prev) => prev.filter((m) => m.id !== meetingRowTarget.id))
         toast.success('Meeting deleted.')
       } else {
-        const me = meetingRowTarget.members?.find((m) => m.uid === user.uid)
-        const updates: Record<string, unknown> = { memberUids: arrayRemove(user.uid) }
-        if (me) updates.members = arrayRemove(me)
-        await updateDoc(doc(db, 'meetings', meetingRowTarget.id), updates)
+        const updatedMembers = meetingRowTarget.members?.filter((m) => m.uid !== user.uid) ?? []
+        await updateDoc(doc(db, 'meetings', meetingRowTarget.id), {
+          memberUids: arrayRemove(user.uid),
+          members: updatedMembers,
+        })
         setMeetings((prev) => prev.filter((m) => m.id !== meetingRowTarget.id))
         toast.success('You left the meeting.')
       }

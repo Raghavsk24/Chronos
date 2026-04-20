@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { doc, getDoc, updateDoc, setDoc, arrayUnion } from 'firebase/firestore'
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
+import { doc, getDoc, updateDoc, setDoc, arrayUnion, getDocs, collection, query, where, writeBatch } from 'firebase/firestore'
+import { signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
 import { toast } from 'sonner'
 import { auth, db, googleProvider } from '@/lib/firebase'
 import { Button } from '@/components/ui/button'
@@ -48,6 +48,7 @@ export default function Join() {
 
     if (alreadyMember) {
       toast.success('You are already in this lobby!')
+      setJoining(false)
       navigate(`/app/lobbies/${lobby.id}`)
       return
     }
@@ -60,16 +61,32 @@ export default function Join() {
     }
 
     try {
+      const newMember = {
+        uid: user.uid,
+        displayName: user.displayName,
+        email: user.email,
+        photoURL: user.photoURL,
+      }
+
       const lobbyRef = doc(db, 'lobbies', lobby.id)
       await updateDoc(lobbyRef, {
         memberUids: arrayUnion(user.uid),
-        members: arrayUnion({
-          uid: user.uid,
-          displayName: user.displayName,
-          email: user.email,
-          photoURL: user.photoURL,
-        }),
+        members: arrayUnion(newMember),
       })
+
+      const meetingsSnap = await getDocs(
+        query(collection(db, 'meetings'), where('lobbyId', '==', lobby.id))
+      )
+      if (!meetingsSnap.empty) {
+        const batch = writeBatch(db)
+        meetingsSnap.docs.forEach((d) => {
+          batch.update(d.ref, {
+            memberUids: arrayUnion(user.uid),
+            members: arrayUnion(newMember),
+          })
+        })
+        await batch.commit()
+      }
 
       toast.success(`You've joined ${lobby.name}!`)
       navigate(`/app/lobbies/${lobby.id}`)
@@ -107,11 +124,16 @@ export default function Join() {
       }
 
       const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
-      await updateDoc(userRef, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokenResponse = (result as any)._tokenResponse
+      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
+      const tokenPayload: Record<string, unknown> = {
         googleAccessToken: accessToken,
         tokenUpdatedAt: new Date(),
         'settings.timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
-      })
+      }
+      if (refreshToken) tokenPayload.googleRefreshToken = refreshToken
+      await updateDoc(userRef, tokenPayload)
 
       await joinLobby(result.user)
     } catch (error) {
@@ -119,17 +141,6 @@ export default function Join() {
       console.error(error)
     }
   }
-
-  // If already signed in, trigger join automatically
-  useEffect(() => {
-    if (loading) return
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user && lobby && !joining) {
-        joinLobby(user)
-      }
-    })
-    return unsubscribe
-  }, [loading, lobby])
 
   if (loading) {
     return (

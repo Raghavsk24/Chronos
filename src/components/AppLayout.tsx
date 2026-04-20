@@ -6,6 +6,8 @@ import { auth } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import UserProfilePanel from '@/components/UserProfilePanel'
 import Avatar from '@/components/Avatar'
+import { Link } from 'react-router-dom'
+import ChronosLogo from '@/components/ChronosLogo'
 
 const navItems = [
   { to: '/app/dashboard', label: 'Dashboard' },
@@ -33,7 +35,9 @@ export default function AppLayout() {
     <div className="h-screen flex flex-col overflow-hidden">
       <header className="border-b-[1.5px] shrink-0">
         <div className="h-14 flex items-center justify-between px-4 md:px-6">
-          <span className="text-lg font-bold tracking-tight">Chronos</span>
+          <Link to="/app/dashboard">
+            <ChronosLogo height={30} />
+          </Link>
           <button
             onClick={() => setProfileOpen(true)}
             className="group flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border-[1.5px] border-slate-300 bg-slate-100 hover:bg-slate-200/70 transition-colors"

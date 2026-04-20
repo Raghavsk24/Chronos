@@ -95,6 +95,10 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
     fetchLobbies()
   }, [open, user])
 
+  useEffect(() => {
+    if (open) reset()
+  }, [open, defaultLobbyId])
+
   const reset = () => {
     setSelectedLobbyId(defaultLobbyId ?? ''); setMeetingName(''); setMeetingDescription('')
     setDuration('60'); setMeetingLink(''); setDayPart(null)
@@ -157,8 +161,13 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
 
   const canSubmit = selectedLobbyId && meetingName.trim() && !loading
 
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen)
+    if (!nextOpen) reset()
+  }
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger render={<Button variant="default" />}>New Meeting</DialogTrigger>
       <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
         <DialogHeader>
@@ -176,17 +185,18 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                 ) : lobbies.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No lobbies found. Create one first.</p>
                 ) : (
-                  <select
-                    id="lobby-select"
-                    value={selectedLobbyId}
-                    onChange={(e) => setSelectedLobbyId(e.target.value)}
-                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-                  >
-                    <option value="">Choose a lobby...</option>
-                    {lobbies.map((l) => (
-                      <option key={l.id} value={l.id}>{l.name}</option>
-                    ))}
-                  </select>
+                  <Select value={selectedLobbyId} onValueChange={setSelectedLobbyId}>
+                    <SelectTrigger className="h-8 w-full">
+                      <SelectValue placeholder="Choose a lobby...">
+                        {lobbies.find(l => l.id === selectedLobbyId)?.name}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {lobbies.map((l) => (
+                        <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 )}
               </div>
               <div className="border-t" />
@@ -214,17 +224,17 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
             <div className="flex gap-3">
               <div className="flex flex-col gap-1.5 flex-1">
                 <Label htmlFor="m-duration">Duration</Label>
-                <select
-                  id="m-duration"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-                >
-                  <option value="30">30 min</option>
-                  <option value="60">1 hour</option>
-                  <option value="90">1.5 hours</option>
-                  <option value="120">2 hours</option>
-                </select>
+                <Select value={duration} onValueChange={setDuration}>
+                  <SelectTrigger className="h-8 w-full">
+                    <SelectValue>{{ '30': '30 min', '60': '1 hour', '90': '1.5 hours', '120': '2 hours' }[duration]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30 min</SelectItem>
+                    <SelectItem value="60">1 hour</SelectItem>
+                    <SelectItem value="90">1.5 hours</SelectItem>
+                    <SelectItem value="120">2 hours</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-1.5 flex-1">
                 <Label htmlFor="m-link">Meeting link</Label>

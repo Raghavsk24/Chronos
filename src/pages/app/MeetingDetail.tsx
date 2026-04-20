@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { arrayRemove, deleteDoc, doc, getDoc, updateDoc } from 'firebase/firestore'
+import { arrayRemove, deleteDoc, doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
@@ -191,7 +191,6 @@ export default function MeetingDetail() {
 
     const userData = userSnap.data()
     const hasToken = Boolean(userData.googleAccessToken)
-    const tokenFresh = isGoogleTokenFresh(userData.tokenUpdatedAt as FirestoreTimestampLike)
 
     if (!hasToken) {
       setCalendarConnectionReady(false)
@@ -199,27 +198,11 @@ export default function MeetingDetail() {
       return
     }
 
-    if (!tokenFresh) {
-      setCalendarConnectionReady(false)
-      setCalendarConnectionReason('Google Calendar access may be expired. Reconnect in Settings before scheduling.')
-      return
-    }
-
     setCalendarConnectionReady(true)
     setCalendarConnectionReason('')
   }, [user])
 
-  const fetchMeeting = useCallback(async () => {
-    if (!meetingId || !user) return
-    const [meetingSnap, userSnap] = await Promise.all([
-      getDoc(doc(db, 'meetings', meetingId)),
-      getDoc(doc(db, 'users', user.uid)),
-    ])
-    if (!meetingSnap.exists()) { navigate(`/app/lobbies/${lobbyId}`); return }
-    const meetingData = { id: meetingSnap.id, ...meetingSnap.data() } as Meeting
-    setMeeting(meetingData)
-
-    const participantUids = meetingData.memberUids ?? meetingData.members?.map((m) => m.uid) ?? []
+  const refreshCalendarStatuses = useCallback(async (participantUids: string[]) => {
     const statusEntries = await Promise.all(
       participantUids.map(async (uid) => {
         const memberSnap = await getDoc(doc(db, 'users', uid))
@@ -230,13 +213,37 @@ export default function MeetingDetail() {
       })
     )
     setCalendarConnectionByUid(Object.fromEntries(statusEntries))
+  }, [])
 
+  const fetchMeeting = useCallback(async () => {
+    if (!meetingId || !user) return
+    const userSnap = await getDoc(doc(db, 'users', user.uid))
     const tz = userSnap.data()?.settings?.timezone
     if (tz) setUserTimezone(tz)
-    setLoading(false)
   }, [meetingId, user])
 
-  useEffect(() => { fetchMeeting() }, [fetchMeeting])
+  const prevMemberUidsRef = useRef<string>('')
+
+  useEffect(() => {
+    if (!meetingId || !user) return
+    fetchMeeting()
+
+    const unsubscribe = onSnapshot(doc(db, 'meetings', meetingId), async (snap) => {
+      if (!snap.exists()) { navigate(`/app/lobbies/${lobbyId}`); return }
+      const meetingData = { id: snap.id, ...snap.data() } as Meeting
+      setMeeting(meetingData)
+      setLoading(false)
+
+      const participantUids = meetingData.memberUids ?? meetingData.members?.map((m) => m.uid) ?? []
+      const uidsKey = [...participantUids].sort().join(',')
+      if (uidsKey !== prevMemberUidsRef.current) {
+        prevMemberUidsRef.current = uidsKey
+        await refreshCalendarStatuses(participantUids)
+      }
+    })
+
+    return () => unsubscribe()
+  }, [meetingId, user, lobbyId, navigate, fetchMeeting, refreshCalendarStatuses])
 
   useEffect(() => {
     if (!user) return
@@ -429,21 +436,29 @@ export default function MeetingDetail() {
     }
   }
 
+  const handleRemoveMeetingMember = async (member: Member) => {
+    if (!meeting) return
+    try {
+      const updatedMembers = meeting.members?.filter((m) => m.uid !== member.uid) ?? []
+      await updateDoc(doc(db, 'meetings', meeting.id), {
+        memberUids: arrayRemove(member.uid),
+        members: updatedMembers,
+      })
+      toast.success(`${member.displayName} removed from the meeting.`)
+    } catch {
+      toast.error('Failed to remove participant.')
+    }
+  }
+
   const handleLeaveMeeting = async () => {
     if (!meeting || !user) return
     setActing(true)
     try {
-      const me = meeting.members?.find((m) => m.uid === user.uid)
-      if (me) {
-        await updateDoc(doc(db, 'meetings', meeting.id), {
-          memberUids: arrayRemove(user.uid),
-          members: arrayRemove(me),
-        })
-      } else {
-        await updateDoc(doc(db, 'meetings', meeting.id), {
-          memberUids: arrayRemove(user.uid),
-        })
-      }
+      const updatedMembers = meeting.members?.filter((m) => m.uid !== user.uid) ?? []
+      await updateDoc(doc(db, 'meetings', meeting.id), {
+        memberUids: arrayRemove(user.uid),
+        members: updatedMembers,
+      })
       toast.success('You left the meeting.')
       navigate(`/app/lobbies/${lobbyId}`)
     } catch {
@@ -704,42 +719,54 @@ export default function MeetingDetail() {
           {!meeting.members || meeting.members.length === 0 ? (
             <p className="text-sm text-muted-foreground">No participants found for this meeting.</p>
           ) : (
-            <ul className="flex flex-col divide-y">
-              {meeting.members.map((member) => {
+            <ul className="flex flex-col">
+              {meeting.members.map((member, idx) => {
                 const isHostMember = member.uid === meeting.hostUid
                 const isMe = member.uid === user?.uid
                 const connected = calendarConnectionByUid[member.uid]
 
                 return (
-                  <li key={member.uid} className="flex items-center justify-between gap-3 py-3">
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <Avatar src={member.photoURL} name={member.displayName} className="w-8 h-8 text-xs" />
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium leading-tight truncate">
-                          {member.displayName}
-                          {isMe && <span className="text-muted-foreground font-normal text-xs"> (you)</span>}
-                        </p>
-                        <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                  <Fragment key={member.uid}>
+                    {idx > 0 && <li className="border-t" />}
+                    <li className="flex items-center justify-between gap-3 py-3">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        <Avatar src={member.photoURL} name={member.displayName} className="w-8 h-8 text-xs" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium leading-tight truncate">
+                            {member.displayName}
+                            {isMe && <span className="text-muted-foreground font-normal text-xs"> (you)</span>}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                        </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span
-                        className={`text-[11px] border rounded-full px-2 py-0.5 ${
-                          connected
-                            ? 'text-green-700 border-green-200 bg-green-50'
-                            : 'text-amber-700 border-amber-200 bg-amber-50'
-                        }`}
-                      >
-                        {connected ? 'Calendar connected' : 'Calendar not connected'}
-                      </span>
-                      {isHostMember && (
-                        <span className="text-xs text-muted-foreground border rounded-full px-2 py-0.5">
-                          Host
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span
+                          className={`text-[11px] border rounded-full px-2 py-0.5 ${
+                            connected
+                              ? 'text-green-700 border-green-200 bg-green-50'
+                              : 'text-amber-700 border-amber-200 bg-amber-50'
+                          }`}
+                        >
+                          {connected ? 'Calendar connected' : 'Calendar not connected'}
                         </span>
-                      )}
-                    </div>
-                  </li>
+                        {isHostMember && (
+                          <span className="text-xs text-muted-foreground border rounded-full px-2 py-0.5">
+                            Host
+                          </span>
+                        )}
+                        {isHost && !isHostMember && (
+                          <button
+                            onClick={() => handleRemoveMeetingMember(member)}
+                            className="w-6 h-6 rounded-full border border-input flex items-center justify-center text-muted-foreground hover:text-destructive hover:border-destructive transition-colors"
+                            title={`Remove ${member.displayName}`}
+                          >
+                            <X className="size-3" />
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  </Fragment>
                 )
               })}
             </ul>
@@ -773,16 +800,20 @@ export default function MeetingDetail() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Duration</label>
-                <select
+                <Select
                   value={settingsForm.duration}
-                  onChange={(e) => setSettingsForm((prev) => ({ ...prev, duration: e.target.value }))}
-                  className="h-8 w-full rounded-lg border border-input bg-background px-2.5 text-sm"
+                  onValueChange={(v) => setSettingsForm((prev) => ({ ...prev, duration: v }))}
                 >
-                  <option value="30">30 min</option>
-                  <option value="60">1 hour</option>
-                  <option value="90">1.5 hours</option>
-                  <option value="120">2 hours</option>
-                </select>
+                  <SelectTrigger className="h-8 w-full">
+                    <SelectValue>{{ '30': '30 min', '60': '1 hour', '90': '1.5 hours', '120': '2 hours' }[settingsForm.duration]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30 min</SelectItem>
+                    <SelectItem value="60">1 hour</SelectItem>
+                    <SelectItem value="90">1.5 hours</SelectItem>
+                    <SelectItem value="120">2 hours</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Meeting link</label>

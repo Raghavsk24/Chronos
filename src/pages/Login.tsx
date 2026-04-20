@@ -167,7 +167,7 @@ export default function Login() {
 
   const ensureUserDoc = async (
     user: User,
-    options?: { accessToken?: string; firstName?: string; lastName?: string; displayName?: string }
+    options?: { accessToken?: string; refreshToken?: string; firstName?: string; lastName?: string; displayName?: string }
   ) => {
     const userRef = doc(db, 'users', user.uid)
     const userSnap = await getDoc(userRef)
@@ -200,6 +200,9 @@ export default function Login() {
       payload.googleAccessToken = options.accessToken
       payload.tokenUpdatedAt = new Date()
     }
+    if (options?.refreshToken) {
+      payload.googleRefreshToken = options.refreshToken
+    }
     await setDoc(userRef, payload, { merge: true })
   }
 
@@ -209,6 +212,9 @@ export default function Login() {
       const result = await signInWithPopup(auth, googleProvider)
       const user = result.user
       const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokenResponse = (result as any)._tokenResponse
+      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
 
       let linkedPassword = false
       if (linkIntent) {
@@ -257,6 +263,7 @@ export default function Login() {
 
       await ensureUserDoc(user, {
         accessToken,
+        refreshToken: refreshToken || undefined,
         firstName: linkIntent?.firstName,
         lastName: linkIntent?.lastName,
         displayName: displayNameFromForm,

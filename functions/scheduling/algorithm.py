@@ -267,7 +267,7 @@ def find_meeting_slots(
     work_days = sorted(common_work_days)
 
     meeting_duration = timedelta(minutes=meeting_duration_minutes)
-    work_days_evaluated = 0
+    work_days_evaluated = 0        # updated by the unrestricted _search pass
     work_days_with_sufficient_window = 0
 
     # -----------------------------------------------------------------------
@@ -302,97 +302,114 @@ def find_meeting_slots(
     all_busy_expanded.sort(key=lambda s: s.start)
 
     # -----------------------------------------------------------------------
-    # Change 1: Search week by week until slots are found or max_weeks reached
+    # Search helper: scan the week window optionally restricted to a date set
     # -----------------------------------------------------------------------
-    for week in range(max_weeks):
-        week_start = search_start + timedelta(weeks=week)
-        week_end = week_start + timedelta(days=7)
+    def _search(date_filter: Optional[set]) -> Optional[List[ScoredSlot]]:
+        """Return top scored slots, or None if nothing found."""
+        _evaluated = 0
+        _sufficient = 0
 
-        scored_slots: List[ScoredSlot] = []
-        current_day = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        for week in range(max_weeks):
+            week_start = search_start + timedelta(weeks=week)
+            week_end = week_start + timedelta(days=7)
 
-        while current_day < week_end:
+            scored_slots: List[ScoredSlot] = []
+            current_day = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
-            # Skip days not in target_dates when a specific date list is provided
-            if target_dates and current_day.date() not in target_dates:
-                current_day += timedelta(days=1)
-                continue
-
-            if current_day.weekday() in work_days:
-                work_days_evaluated += 1
-                # Convert each participant's local work hours to UTC for this day,
-                # then intersect (latest start, earliest end) to get the shared window.
-                utc_starts = []
-                utc_ends = []
-                for wh in work_hours_by_participant.values():
-                    tz = ZoneInfo(wh.get('timezone', 'UTC'))
-                    local_start = datetime(
-                        current_day.year, current_day.month, current_day.day,
-                        wh['start_hour'], wh['start_minute'], tzinfo=tz,
-                    )
-                    local_end = datetime(
-                        current_day.year, current_day.month, current_day.day,
-                        wh['end_hour'], wh['end_minute'], tzinfo=tz,
-                    )
-                    utc_starts.append(local_start.astimezone(timezone.utc).replace(tzinfo=None))
-                    utc_ends.append(local_end.astimezone(timezone.utc).replace(tzinfo=None))
-
-                day_start = max(utc_starts)
-                day_end = min(utc_ends)
-
-                if (day_end - day_start).total_seconds() / 60 < meeting_duration_minutes:
+            while current_day < week_end:
+                # When a date filter is active, skip days not in the allowed set.
+                if date_filter is not None and current_day.date() not in date_filter:
                     current_day += timedelta(days=1)
                     continue
 
-                work_days_with_sufficient_window += 1
+                if current_day.weekday() in work_days:
+                    _evaluated += 1
+                    # Convert each participant's local work hours to UTC for this day,
+                    # then intersect (latest start, earliest end) to get the shared window.
+                    utc_starts = []
+                    utc_ends = []
+                    for wh in work_hours_by_participant.values():
+                        tz = ZoneInfo(wh.get('timezone', 'UTC'))
+                        local_start = datetime(
+                            current_day.year, current_day.month, current_day.day,
+                            wh['start_hour'], wh['start_minute'], tzinfo=tz,
+                        )
+                        local_end = datetime(
+                            current_day.year, current_day.month, current_day.day,
+                            wh['end_hour'], wh['end_minute'], tzinfo=tz,
+                        )
+                        utc_starts.append(local_start.astimezone(timezone.utc).replace(tzinfo=None))
+                        utc_ends.append(local_end.astimezone(timezone.utc).replace(tzinfo=None))
 
-                candidate_start = day_start
+                    day_start = max(utc_starts)
+                    day_end = min(utc_ends)
 
-                while candidate_start + meeting_duration <= day_end:
-                    candidate_end = candidate_start + meeting_duration
-                    candidate = TimeSlot(start=candidate_start, end=candidate_end)
+                    if (day_end - day_start).total_seconds() / 60 < meeting_duration_minutes:
+                        current_day += timedelta(days=1)
+                        continue
 
-                    has_conflict = any(
-                        candidate.overlaps(busy) for busy in all_busy_expanded
-                    )
+                    _sufficient += 1
 
-                    if not has_conflict:
-                        pos_score = _score_position(
-                            candidate_start, candidate_end, day_start, day_end, day_part
+                    candidate_start = day_start
+                    while candidate_start + meeting_duration <= day_end:
+                        candidate_end = candidate_start + meeting_duration
+                        candidate = TimeSlot(start=candidate_start, end=candidate_end)
+
+                        has_conflict = any(
+                            candidate.overlaps(busy) for busy in all_busy_expanded
                         )
 
-                        buf_min, buf_avg = _score_buffer_all_participants(
-                            candidate_start, candidate_end,
-                            busy_by_participant_original,
-                            day_start, day_end,
-                        )
+                        if not has_conflict:
+                            pos_score = _score_position(
+                                candidate_start, candidate_end, day_start, day_end, day_part
+                            )
+                            buf_min, buf_avg = _score_buffer_all_participants(
+                                candidate_start, candidate_end,
+                                busy_by_participant_original,
+                                day_start, day_end,
+                            )
+                            final_score = (
+                                (position_weight * pos_score) +
+                                (buffer_weight * buf_min)
+                            )
+                            scored_slots.append(ScoredSlot(
+                                start=candidate_start,
+                                end=candidate_end,
+                                score=final_score,
+                                position_score=pos_score,
+                                buffer_score=buf_min,
+                                buffer_score_avg=buf_avg,
+                            ))
 
-                        final_score = (
-                            (position_weight * pos_score) +
-                            (buffer_weight * buf_min)
-                        )
+                        candidate_start += timedelta(minutes=step_minutes)
 
-                        scored_slots.append(ScoredSlot(
-                            start=candidate_start,
-                            end=candidate_end,
-                            score=final_score,
-                            position_score=pos_score,
-                            buffer_score=buf_min,
-                            buffer_score_avg=buf_avg,
-                        ))
+                current_day += timedelta(days=1)
 
-                    candidate_start += timedelta(minutes=step_minutes)
+            if scored_slots:
+                scored_slots.sort(
+                    key=lambda s: (s.start.date(), -s.score, -s.buffer_score_avg)
+                )
+                return scored_slots[:top_n]
 
-            current_day += timedelta(days=1)
+        # Track for error diagnosis (only meaningful on the unrestricted pass)
+        nonlocal work_days_evaluated, work_days_with_sufficient_window
+        work_days_evaluated = _evaluated
+        work_days_with_sufficient_window = _sufficient
+        return None
 
-        if scored_slots:
-            # Change 7: Primary sort = date ascending (closest day first)
-            #           Secondary sort = score descending (best score first within same day)
-            #           Tertiary sort = avg buffer score descending (tiebreaker)
-            scored_slots.sort(
-                key=lambda s: (s.start.date(), -s.score, -s.buffer_score_avg)
-            )
-            return {'slots': [s.to_dict() for s in scored_slots[:top_n]]}
+    # -----------------------------------------------------------------------
+    # Phase 1: if target dates were requested, try exact dates first.
+    # Phase 2: fall back to all working days within the search window,
+    #          sorted closest-first (this is the default when no target dates).
+    # -----------------------------------------------------------------------
+    if target_dates:
+        slots = _search(date_filter=target_dates)
+        if slots:
+            return {'slots': [s.to_dict() for s in slots]}
+
+    slots = _search(date_filter=None)
+    if slots:
+        return {'slots': [s.to_dict() for s in slots]}
 
     if work_days_evaluated > 0 and work_days_with_sufficient_window == 0:
         return {

@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
@@ -37,6 +38,33 @@ def _to_naive_utc(iso_str: str) -> str:
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt.isoformat()
+
+
+def _refresh_access_token(refresh_token: str) -> str | None:
+    """Exchange a Google OAuth refresh token for a new access token."""
+    client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    if not client_id or not client_secret or not refresh_token:
+        return None
+
+    payload = urllib.parse.urlencode({
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'refresh_token': refresh_token,
+        'grant_type': 'refresh_token',
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        'https://oauth2.googleapis.com/token',
+        data=payload,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read()).get('access_token')
+    except Exception:
+        return None
 
 
 def _fetch_busy_slots(access_token: str, search_start: datetime) -> list[dict] | None:
@@ -112,7 +140,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         )
 
     client = _get_db()
-    search_start = datetime.now()
+    search_start = datetime.utcnow()  # naive UTC, consistent with work-window conversion
 
     # --- 1. Fetch meeting ---
     meeting_doc = client.collection('meetings').document(meeting_id).get()
@@ -146,15 +174,34 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         user_data: dict = user_doc.to_dict() or {}
         settings: dict = user_data.get('settings', {})
         access_token: str = user_data.get('googleAccessToken', '')
+        refresh_token: str = user_data.get('googleRefreshToken', '')
         display_name = user_data.get('displayName', uid)
 
-        # Ignore members who do not have a usable Google Calendar token.
-        # Scheduling still proceeds using the connected subset.
+        # If no access token but we have a refresh token, get a fresh one immediately.
+        if not access_token and refresh_token:
+            access_token = _refresh_access_token(refresh_token) or ''
+            if access_token:
+                client.collection('users').document(uid).update({
+                    'googleAccessToken': access_token,
+                    'tokenUpdatedAt': datetime.now(timezone.utc),
+                })
+
         if not access_token:
             ignored_members.append(display_name)
             continue
 
         busy = _fetch_busy_slots(access_token, search_start)
+
+        # Token expired — try refreshing once.
+        if busy is None and refresh_token:
+            new_token = _refresh_access_token(refresh_token)
+            if new_token:
+                client.collection('users').document(uid).update({
+                    'googleAccessToken': new_token,
+                    'tokenUpdatedAt': datetime.now(timezone.utc),
+                })
+                busy = _fetch_busy_slots(new_token, search_start)
+
         if busy is None:
             ignored_members.append(display_name)
             continue
@@ -219,17 +266,27 @@ def _create_calendar_event(
     start_iso: str,
     end_iso: str,
     attendee_emails: list[str],
+    meeting_link: str = '',
 ) -> bool:
     """Create a Google Calendar event on a user's primary calendar."""
     start_dt = start_iso if start_iso.endswith('Z') else f'{start_iso}Z'
     end_dt = end_iso if end_iso.endswith('Z') else f'{end_iso}Z'
 
-    payload = json.dumps({
+    description_lines = [summary]
+    if meeting_link:
+        description_lines.append(f'Join link: {meeting_link}')
+
+    payload_dict = {
         'summary': summary,
         'start': {'dateTime': start_dt, 'timeZone': 'UTC'},
         'end':   {'dateTime': end_dt,   'timeZone': 'UTC'},
         'attendees': [{'email': e} for e in attendee_emails],
-    }).encode('utf-8')
+        'description': '\n'.join(description_lines),
+    }
+    if meeting_link:
+        payload_dict['location'] = meeting_link
+
+    payload = json.dumps(payload_dict).encode('utf-8')
 
     req = urllib.request.Request(
         'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
@@ -284,13 +341,24 @@ def _send_resend_email(to_email: str, subject: str, html: str) -> bool:
         return False
 
 
-def _build_reminder_email_html(meeting_name: str, slot_start: datetime, slot_end: datetime, reminder_type: str) -> str:
+def _build_reminder_email_html(
+    meeting_name: str,
+    slot_start: datetime,
+    slot_end: datetime,
+    reminder_type: str,
+    meeting_link: str = '',
+) -> str:
     reminder_label = 'in 24 hours' if reminder_type == '24h' else 'in 1 hour'
     start_label = slot_start.strftime('%Y-%m-%d %H:%M UTC')
     end_label = slot_end.strftime('%H:%M UTC')
+    join_link_html = ''
+    if meeting_link:
+        join_link_html = f'<p><strong>Join:</strong> <a href="{meeting_link}">{meeting_link}</a></p>'
+
     return (
         f'<p>This is a reminder that <strong>{meeting_name}</strong> starts {reminder_label}.</p>'
         f'<p><strong>When:</strong> {start_label} to {end_label}</p>'
+        f'{join_link_html}'
         '<p>Open Chronos to view meeting details and join link.</p>'
     )
 
@@ -359,7 +427,13 @@ def send_meeting_email_reminders(event: scheduler_fn.ScheduledEvent) -> None:
 
             if should_send_24h:
                 subject = f'Reminder: {meeting.get("name", "Meeting")} starts in 24 hours'
-                html = _build_reminder_email_html(meeting.get('name', 'Meeting'), slot_start, slot_end, '24h')
+                html = _build_reminder_email_html(
+                    meeting.get('name', 'Meeting'),
+                    slot_start,
+                    slot_end,
+                    '24h',
+                    meeting.get('meetingLink') or '',
+                )
                 if _send_resend_email(email, subject, html):
                     just_sent_24h.append(uid)
                     sent_count += 1
@@ -368,7 +442,13 @@ def send_meeting_email_reminders(event: scheduler_fn.ScheduledEvent) -> None:
 
             if should_send_1h:
                 subject = f'Reminder: {meeting.get("name", "Meeting")} starts in 1 hour'
-                html = _build_reminder_email_html(meeting.get('name', 'Meeting'), slot_start, slot_end, '1h')
+                html = _build_reminder_email_html(
+                    meeting.get('name', 'Meeting'),
+                    slot_start,
+                    slot_end,
+                    '1h',
+                    meeting.get('meetingLink') or '',
+                )
                 if _send_resend_email(email, subject, html):
                     just_sent_1h.append(uid)
                     sent_count += 1
@@ -435,6 +515,7 @@ def _book_meeting_impl(
 
     member_uids: list[str] = meeting.get('memberUids', [])
     summary = meeting.get('name', 'Meeting')
+    meeting_link = (meeting.get('meetingLink') or '').strip()
 
     attendee_emails: list[str] = []
     host_token: str = ''
@@ -463,7 +544,14 @@ def _book_meeting_impl(
             message='No attendee emails are available for this meeting.',
         )
 
-    success = create_event_fn(host_token, summary, slot_start, slot_end, attendee_emails)
+    success = create_event_fn(
+        host_token,
+        summary,
+        slot_start,
+        slot_end,
+        attendee_emails,
+        meeting_link,
+    )
     if not success:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
