@@ -272,48 +272,54 @@ export default function LobbyDetail() {
         )}
       </div>
 
-      {/* Lobby Details — full width */}
+      {/* Lobby Overview — full width */}
       <div className="px-8 py-6 border-b">
-        <h2 className="text-base font-bold mb-4">Lobby Details</h2>
-        <div className="flex flex-wrap gap-x-10 gap-y-2 text-sm mb-5">
-          {lobby.description && (
-            <p>
-              <span className="font-bold">Description: </span>
-              <span className="text-muted-foreground">{lobby.description}</span>
-            </p>
-          )}
-          <p>
-            <span className="font-bold">Members: </span>
-            <span className="text-muted-foreground">{lobby.memberUids.length}</span>
+        <h2 className="text-[16.5px] font-bold underline underline-offset-2 mb-2">Lobby Overview</h2>
+        {lobby.description && (
+          <p className="text-sm text-muted-foreground mb-3">
+            <span className="font-bold text-foreground">Description: </span>
+            {lobby.description}
           </p>
-          <p>
-            <span className="font-bold">Date Created: </span>
-            <span className="text-muted-foreground">{formatDate(lobby.createdAt)}</span>
-          </p>
-          <p>
-            <span className="font-bold">Host: </span>
-            <span className="text-muted-foreground">{lobby.hostName}</span>
-          </p>
-          <p>
-            <span className="font-bold">Meetings: </span>
-            <span className="text-muted-foreground">{meetings.length}</span>
-          </p>
+        )}
+
+        {/* Metadata pills */}
+        <div className="flex flex-wrap gap-1.5 mb-[21px]">
+          {[
+            { label: 'Date Created', value: formatDate(lobby.createdAt) },
+            { label: 'Host', value: lobby.hostName },
+            { label: 'Meetings', value: String(meetings.length) },
+            { label: 'Members', value: String(lobby.memberUids.length) },
+          ].map(({ label, value }) => (
+            <span key={label} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs">
+              <span className="font-semibold text-black">{label}:</span>
+              <span className="text-black">{value}</span>
+            </span>
+          ))}
         </div>
 
+        {/* Invitation Link inline */}
         {isHost && (
-          <div>
-            <p className="text-sm font-bold mb-2">Invitation Link</p>
-            <div className="flex gap-2 max-w-lg">
-              <div className="flex items-center gap-2 flex-1 rounded-lg border bg-muted/40 px-3 py-1.5 min-w-0">
-                <Link2 className="size-3.5 text-muted-foreground shrink-0" />
-                <span className="text-xs text-muted-foreground truncate">
-                  {window.location.origin}/join/{lobby.id}
-                </span>
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-start gap-3">
+              <span className="text-sm font-bold whitespace-nowrap mt-[5px]">Invitation Link:</span>
+              <div className="flex flex-col gap-1 flex-1 max-w-lg min-w-0">
+                <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-1.5 min-w-0">
+                  <Link2 className="size-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-xs text-muted-foreground truncate flex-1">
+                    {window.location.origin}/join/{lobby.id}
+                  </span>
+                  <button
+                    onClick={handleCopyLink}
+                    className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                    title="Copy link"
+                  >
+                    <Copy className="size-3.5" />
+                  </button>
+                </div>
+                <p className="text-[8px] text-muted-foreground">
+                  Share this invite link with your team so they can join the lobby.
+                </p>
               </div>
-              <Button size="sm" variant="outline" onClick={handleCopyLink} className="shrink-0 gap-1.5">
-                <Copy className="size-3.5" />
-                Copy
-              </Button>
             </div>
           </div>
         )}
@@ -324,7 +330,7 @@ export default function LobbyDetail() {
 
         {/* LEFT 70% — Meetings */}
         <div className="flex-[7] border-r px-8 py-6">
-          <h2 className="text-base font-bold mb-4">Meetings</h2>
+          <h2 className="text-[16.5px] font-bold underline underline-offset-2 mb-4">Meetings</h2>
 
           {/* Search + sort + New Meeting in one row */}
           <div className="flex gap-2 mb-3">
@@ -415,11 +421,10 @@ export default function LobbyDetail() {
 
         {/* RIGHT 30% — Participants */}
         <div className="flex-[3] px-6 py-6">
-          <h2 className="text-base font-bold mb-4">
-            Participants{' '}
-            <span className="text-muted-foreground font-normal text-sm">({lobby.members.length})</span>
+          <h2 className="text-[16.5px] font-bold underline underline-offset-2 mb-4">
+            Participants
           </h2>
-          <ul className="flex flex-col divide-y">
+          <ul className="flex flex-col divide-y -mt-[10px]">
             {lobby.members.map((member) => {
               const isThisHost = member.uid === lobby.hostUid
               const isMe = member.uid === user?.uid
