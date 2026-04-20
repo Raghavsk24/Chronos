@@ -371,6 +371,7 @@ function StepDOB({
                     <Select
                       value={String(monthIndex)}
                       onValueChange={(value) => {
+                        if (!value) return
                         const next = new Date(yearValue, parseInt(value), 1)
                         setCalendarMonth(next)
                       }}
@@ -393,6 +394,7 @@ function StepDOB({
                     <Select
                       value={String(yearValue)}
                       onValueChange={(value) => {
+                        if (!value) return
                         const nextYear = parseInt(value)
                         const nextMonthIndex = nextYear === maxYear
                           ? Math.min(monthIndex, maxMonth.getMonth())

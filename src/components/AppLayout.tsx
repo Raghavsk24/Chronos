@@ -30,20 +30,40 @@ export default function AppLayout() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="h-14 border-b flex items-center justify-between px-6 shrink-0">
-        <span className="text-lg font-bold tracking-tight">Chronos</span>
-        <button
-          onClick={() => setProfileOpen(true)}
-          className="group flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full hover:bg-accent transition-colors"
-        >
-          <Avatar src={user?.photoURL} name={user?.displayName} className="w-7 h-7 text-xs" />
-          <span className="text-sm font-medium leading-none group-hover:underline truncate max-w-[180px]">{user?.displayName}</span>
-        </button>
+    <div className="h-screen flex flex-col overflow-hidden">
+      <header className="border-b shrink-0">
+        <div className="h-14 flex items-center justify-between px-4 md:px-6">
+          <span className="text-lg font-bold tracking-tight">Chronos</span>
+          <button
+            onClick={() => setProfileOpen(true)}
+            className="group flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full hover:bg-accent transition-colors"
+          >
+            <Avatar src={user?.photoURL} name={user?.displayName} className="w-7 h-7 text-xs" />
+            <span className="text-sm font-medium leading-none group-hover:underline truncate max-w-[140px] md:max-w-[180px]">
+              {user?.displayName}
+            </span>
+          </button>
+        </div>
+
+        <nav className="md:hidden border-t px-3 py-2 flex items-center gap-1 overflow-x-auto">
+          {navItems.map(({ to, label }) => (
+            <NavLink key={to} to={to} className={navClass}>
+              {label}
+            </NavLink>
+          ))}
+          <NavLink to="/app/settings" className={navClass}>Settings</NavLink>
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-destructive hover:bg-destructive/10 hover:text-destructive text-left whitespace-nowrap"
+          >
+            <LogOut className="size-3.5" />
+            Sign out
+          </button>
+        </nav>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="w-48 border-r flex flex-col p-4 gap-1 shrink-0">
+        <aside className="hidden md:flex w-48 border-r flex-col p-4 gap-1 shrink-0">
           {navItems.map(({ to, label }) => (
             <NavLink key={to} to={to} className={navClass}>
               {label}
@@ -64,7 +84,7 @@ export default function AppLayout() {
             </button>
           </div>
         </aside>
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-hidden min-w-0">
           <Outlet />
         </main>
       </div>

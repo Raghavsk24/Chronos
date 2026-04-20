@@ -3,11 +3,23 @@ export type MeetingStatus = 'scheduling' | 'scheduled' | 'completed'
 export function meetingStatusConfig(status: MeetingStatus | string): { label: string; className: string } {
   switch (status) {
     case 'scheduling':
-      return { label: 'Scheduling', className: 'bg-yellow-100 text-yellow-800 border border-yellow-200' }
+      return {
+        label: 'Scheduling',
+        className:
+          'border [background-color:var(--status-scheduling-bg)] [color:var(--status-scheduling-fg)] [border-color:var(--status-scheduling-border)]',
+      }
     case 'scheduled':
-      return { label: 'Scheduled', className: 'bg-blue-100 text-blue-800 border border-blue-200' }
+      return {
+        label: 'Scheduled',
+        className:
+          'border [background-color:var(--status-scheduled-bg)] [color:var(--status-scheduled-fg)] [border-color:var(--status-scheduled-border)]',
+      }
     case 'completed':
-      return { label: 'Completed', className: 'bg-green-100 text-green-800 border border-green-200' }
+      return {
+        label: 'Completed',
+        className:
+          'border [background-color:var(--status-completed-bg)] [color:var(--status-completed-fg)] [border-color:var(--status-completed-border)]',
+      }
     default:
       return { label: status, className: 'bg-muted text-muted-foreground' }
   }
