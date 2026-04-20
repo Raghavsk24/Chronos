@@ -180,7 +180,7 @@ export default function Dashboard() {
       '—'
 
     const completedCount = meetings.filter((m) => m.status === 'completed').length
-    const rawHours = (completedCount * 30) / 60
+    const rawHours = (completedCount * 36) / 60
     const hoursSaved = rawHours % 1 === 0 ? String(rawHours) : rawHours.toFixed(1)
 
     return { thisWeek, thisMonth, teamMembers, starLobbyName, hoursSaved }
@@ -227,7 +227,7 @@ export default function Dashboard() {
                 <p className="text-lg font-bold text-foreground leading-tight truncate" title={stats.starLobbyName}>
                   {stats.starLobbyName}
                 </p>
-                <p className="text-xs text-muted-foreground">Star lobby</p>
+                <p className="text-xs text-muted-foreground">Most productive lobby</p>
               </div>
             </>
           )}

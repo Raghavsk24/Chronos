@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { arrayRemove, deleteDoc, doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore'
+import { arrayRemove, doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
@@ -103,6 +103,7 @@ interface Slot {
   position_score: number
   buffer_score: number
   buffer_score_avg: number
+  proximity_score: number | null
 }
 
 interface CoverageSummary {
@@ -112,27 +113,10 @@ interface CoverageSummary {
   ignoredMembers: string[]
 }
 
-const GOOGLE_TOKEN_STALE_MINUTES = 55
-
-function isGoogleTokenFresh(tokenUpdatedAt: FirestoreTimestampLike): boolean {
-  if (!tokenUpdatedAt) return false
-
-  let tokenDate: Date | null = null
-  if (tokenUpdatedAt instanceof Date) tokenDate = tokenUpdatedAt
-  else if (typeof tokenUpdatedAt === 'string' || typeof tokenUpdatedAt === 'number') tokenDate = new Date(tokenUpdatedAt)
-  else if (typeof (tokenUpdatedAt as { toDate?: () => Date }).toDate === 'function') {
-    tokenDate = (tokenUpdatedAt as { toDate: () => Date }).toDate()
-  } else if (typeof (tokenUpdatedAt as { seconds?: number }).seconds === 'number') {
-    tokenDate = new Date((tokenUpdatedAt as { seconds: number }).seconds * 1000)
-  }
-
-  if (!tokenDate || Number.isNaN(tokenDate.getTime())) return false
-  const ageMs = Date.now() - tokenDate.getTime()
-  return ageMs <= GOOGLE_TOKEN_STALE_MINUTES * 60 * 1000
-}
 
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
+const cancelBooking = httpsCallable(functions, 'cancel_booking')
 
 export default function MeetingDetail() {
   const { lobbyId, meetingId } = useParams()
@@ -190,7 +174,7 @@ export default function MeetingDetail() {
     }
 
     const userData = userSnap.data()
-    const hasToken = Boolean(userData.googleAccessToken)
+    const hasToken = Boolean(userData.googleAccessToken || userData.googleRefreshToken)
 
     if (!hasToken) {
       setCalendarConnectionReady(false)
@@ -208,7 +192,7 @@ export default function MeetingDetail() {
         const memberSnap = await getDoc(doc(db, 'users', uid))
         if (!memberSnap.exists()) return [uid, false] as const
         const memberData = memberSnap.data() as Record<string, unknown>
-        const connected = Boolean(memberData.googleAccessToken) && isGoogleTokenFresh(memberData.tokenUpdatedAt as FirestoreTimestampLike)
+        const connected = Boolean(memberData.googleAccessToken || memberData.googleRefreshToken)
         return [uid, connected] as const
       })
     )
@@ -298,7 +282,28 @@ export default function MeetingDetail() {
       } else {
         setSlots(data.slots ?? [])
         if (data.warning) toast.info(data.warning)
-        if (!data.slots?.length) setScheduleError('No available slots found in the next 4 weeks.')
+        const targetDates = meeting.preferences?.targetDates
+        if (!data.slots?.length) {
+          if (targetDates?.length) {
+            const labels = targetDates.map((d) =>
+              format(new Date(`${d}T00:00:00`), 'MMMM do, yyyy')
+            ).join(', ')
+            toast.info(`No meeting times were found around your target date${targetDates.length > 1 ? 's' : ''} of ${labels}.`)
+          }
+          setScheduleError('No available slots found in the next 4 weeks.')
+        } else if (targetDates?.length && data.slots?.length) {
+          const targetDateSet = new Set(targetDates)
+          const anyOnTarget = data.slots.some((s) => {
+            const slotDate = new Date(s.start).toISOString().slice(0, 10)
+            return targetDateSet.has(slotDate)
+          })
+          if (!anyOnTarget) {
+            const labels = targetDates.map((d) =>
+              format(new Date(`${d}T00:00:00`), 'MMMM do, yyyy')
+            ).join(', ')
+            toast.info(`No availability on ${labels} — showing the closest available times instead.`)
+          }
+        }
       }
     } catch (err: unknown) {
       setScheduleError(err instanceof Error ? err.message : 'Failed to find meeting times.')
@@ -346,10 +351,7 @@ export default function MeetingDetail() {
     if (!meeting) return
     setRebooking(true)
     try {
-      await updateDoc(doc(db, 'meetings', meeting.id), {
-        status: 'scheduling',
-        scheduledSlot: null,
-      })
+      await cancelBooking({ meetingId: meeting.id, action: 'rebook' })
       setMeeting({ ...meeting, status: 'scheduling', scheduledSlot: null })
       setSlots([])
       setSelectedSlot(null)
@@ -367,7 +369,7 @@ export default function MeetingDetail() {
     if (!meeting) return
     setActing(true)
     try {
-      await deleteDoc(doc(db, 'meetings', meeting.id))
+      await cancelBooking({ meetingId: meeting.id, action: 'cancel' })
       toast.success('Meeting deleted.')
       navigate(`/app/lobbies/${lobbyId}`)
     } catch {
@@ -678,7 +680,10 @@ export default function MeetingDetail() {
                         <span className="relative inline-flex items-center justify-center text-muted-foreground group/why" aria-label="Why this slot">
                           <CircleHelp className="size-4" />
                           <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-[260px] rounded-md border bg-popover p-2 text-xs text-foreground shadow-md group-hover/why:block">
-                            <p>Overall score: {(slot.score * 100).toFixed(1)}%</p>
+                            <p className="font-bold mb-1">Overall score: {(slot.score * 100).toFixed(1)}%</p>
+                            {slot.proximity_score != null && (
+                              <p>Proximity to target date: {(slot.proximity_score * 100).toFixed(1)}%</p>
+                            )}
                             <p>Position score: {(slot.position_score * 100).toFixed(1)}%</p>
                             <p>Buffer score (minimum): {(slot.buffer_score * 100).toFixed(1)}%</p>
                             <p>Buffer score (average): {(slot.buffer_score_avg * 100).toFixed(1)}%</p>

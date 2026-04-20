@@ -195,17 +195,17 @@ export default function CreateLobbyModal({ onCreated }: Props) {
             <div className="flex gap-3">
               <div className="flex flex-col gap-1.5 flex-1">
                 <Label htmlFor="duration">Duration</Label>
-                <select
-                  id="duration"
-                  value={duration}
-                  onChange={(e) => setDuration(e.target.value)}
-                  className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-                >
-                  <option value="30">30 min</option>
-                  <option value="60">1 hour</option>
-                  <option value="90">1.5 hours</option>
-                  <option value="120">2 hours</option>
-                </select>
+                <Select value={duration} onValueChange={setDuration}>
+                  <SelectTrigger id="duration">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30 min</SelectItem>
+                    <SelectItem value="60">1 hour</SelectItem>
+                    <SelectItem value="90">1.5 hours</SelectItem>
+                    <SelectItem value="120">2 hours</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="flex flex-col gap-1.5 flex-1">
                 <Label htmlFor="meeting-link">Meeting link</Label>

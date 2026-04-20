@@ -213,7 +213,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             'start_minute': settings.get('workStartMinute', 0),
             'end_hour':     settings.get('workEndHour', 17),
             'end_minute':   settings.get('workEndMinute', 0),
-            'timezone':     settings.get('timezone', 'UTC'),
+            'timezone':     settings.get('timezone') or 'UTC',
         }
         work_days_by_participant[uid] = settings.get('workDays', [0, 1, 2, 3, 4])
         included_members.append(display_name)
@@ -233,6 +233,14 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         }
 
     # --- 3. Run the scheduling algorithm ---
+    print(f'DEBUG participants included ({len(included_members)}): {included_members}')
+    print(f'DEBUG participants ignored  ({len(ignored_members)}): {ignored_members}')
+    for uid in work_hours_by_participant:
+        wh = work_hours_by_participant[uid]
+        wd = work_days_by_participant[uid]
+        bc = len(busy_slots_by_participant.get(uid, []))
+        print(f'DEBUG [{uid}] timezone={wh.get("timezone")} hours={wh["start_hour"]}:{wh["start_minute"]:02d}-{wh["end_hour"]}:{wh["end_minute"]:02d} work_days={wd} busy_slots={bc}')
+    print(f'DEBUG preferences: {preferences}')
     result = find_meeting_slots(
         busy_slots_by_participant=busy_slots_by_participant,
         buffer_by_participant=buffer_by_participant,
@@ -267,8 +275,8 @@ def _create_calendar_event(
     end_iso: str,
     attendee_emails: list[str],
     meeting_link: str = '',
-) -> bool:
-    """Create a Google Calendar event on a user's primary calendar."""
+) -> str:
+    """Create a Google Calendar event. Returns the event ID on success, '' on failure."""
     start_dt = start_iso if start_iso.endswith('Z') else f'{start_iso}Z'
     end_dt = end_iso if end_iso.endswith('Z') else f'{end_iso}Z'
 
@@ -299,12 +307,37 @@ def _create_calendar_event(
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return 200 <= resp.status < 300
+            return json.loads(resp.read()).get('id', '')
     except urllib.error.HTTPError as e:
         print(f'Calendar API error {e.code}: {e.read().decode()}')
-        return False
+        return ''
     except Exception as e:
         print(f'Calendar event creation failed: {e}')
+        return ''
+
+
+def _delete_calendar_event(access_token: str, event_id: str) -> bool:
+    """Delete a Google Calendar event by ID. Returns True if deleted or already gone."""
+    url = (
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events/'
+        + urllib.parse.quote(event_id, safe='')
+        + '?sendUpdates=all'
+    )
+    req = urllib.request.Request(
+        url,
+        headers={'Authorization': f'Bearer {access_token}'},
+        method='DELETE',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 204
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return True  # already removed
+        print(f'Calendar delete error {e.code}: {e.read().decode()}')
+        return False
+    except Exception as e:
+        print(f'Calendar event deletion failed: {e}')
         return False
 
 
@@ -474,6 +507,26 @@ def send_meeting_email_reminders(event: scheduler_fn.ScheduledEvent) -> None:
     )
 
 
+def _build_booking_confirmation_html(
+    meeting_name: str,
+    slot_start: datetime,
+    slot_end: datetime,
+    meeting_link: str = '',
+) -> str:
+    start_label = slot_start.strftime('%A, %B %-d, %Y at %H:%M UTC')
+    end_label = slot_end.strftime('%H:%M UTC')
+    join_html = (
+        f'<p><strong>Join link:</strong> <a href="{meeting_link}">{meeting_link}</a></p>'
+        if meeting_link else ''
+    )
+    return (
+        f'<p>Your meeting <strong>{meeting_name}</strong> has been booked.</p>'
+        f'<p><strong>When:</strong> {start_label} – {end_label}</p>'
+        f'{join_html}'
+        '<p>You will receive reminders 24 hours and 1 hour before the meeting.</p>'
+    )
+
+
 def _book_meeting_impl(
     data: dict,
     auth_uid: str | None,
@@ -516,21 +569,33 @@ def _book_meeting_impl(
     member_uids: list[str] = meeting.get('memberUids', [])
     summary = meeting.get('name', 'Meeting')
     meeting_link = (meeting.get('meetingLink') or '').strip()
+    host_uid: str = meeting.get('hostUid', '')
 
-    attendee_emails: list[str] = []
-    host_token: str = ''
-
+    # Collect each member's email and (refreshed) access token in one pass.
+    member_data: list[dict] = []
     for uid in member_uids:
         user_doc = db_client.collection('users').document(uid).get()
         if not user_doc.exists:
             continue
-        user_data = user_doc.to_dict() or {}
-        email: str = user_data.get('email', '')
-        token: str = user_data.get('googleAccessToken', '')
-        if email:
-            attendee_emails.append(email)
-        if uid == meeting.get('hostUid') and token:
-            host_token = token
+        udata = user_doc.to_dict() or {}
+        email: str = (udata.get('email') or '').strip()
+        access_token: str = udata.get('googleAccessToken', '')
+        refresh_token: str = udata.get('googleRefreshToken', '')
+
+        if refresh_token:
+            new_token = _refresh_access_token(refresh_token)
+            if new_token:
+                access_token = new_token
+                db_client.collection('users').document(uid).update({
+                    'googleAccessToken': access_token,
+                    'tokenUpdatedAt': datetime.now(timezone.utc),
+                })
+
+        member_data.append({'uid': uid, 'email': email, 'token': access_token})
+
+    attendee_emails = [m['email'] for m in member_data if m['email']]
+    host_entry = next((m for m in member_data if m['uid'] == host_uid), None)
+    host_token = host_entry['token'] if host_entry else ''
 
     if not host_token:
         raise https_fn.HttpsError(
@@ -544,7 +609,8 @@ def _book_meeting_impl(
             message='No attendee emails are available for this meeting.',
         )
 
-    success = create_event_fn(
+    # Create the organiser event on the host's calendar (sends Google invites).
+    host_event_id = create_event_fn(
         host_token,
         summary,
         slot_start,
@@ -552,17 +618,50 @@ def _book_meeting_impl(
         attendee_emails,
         meeting_link,
     )
-    if not success:
+    if not host_event_id:
         raise https_fn.HttpsError(
             code=https_fn.FunctionsErrorCode.INTERNAL,
             message='Failed to create calendar invite event. Meeting was not booked.',
         )
 
+    # Also add the event directly to each participant's own calendar so it
+    # appears immediately without requiring them to accept an invite.
+    # Store each event ID so we can delete them later on reschedule/cancel.
+    calendar_event_ids: dict[str, str] = {host_uid: host_event_id}
+    for member in member_data:
+        if member['uid'] == host_uid:
+            continue
+        if member['token']:
+            eid = create_event_fn(
+                member['token'],
+                summary,
+                slot_start,
+                slot_end,
+                attendee_emails,
+                meeting_link,
+            )
+            if eid:
+                calendar_event_ids[member['uid']] = eid
+
+    # Persist the booking in Firestore.
     db_client.collection('meetings').document(meeting_id).update({
         'status': 'scheduled',
         'scheduledSlot': {'start': slot_start, 'end': slot_end},
         'scheduledAt': admin_firestore.SERVER_TIMESTAMP,
+        'calendarEventIds': calendar_event_ids,
     })
+
+    # Send booking confirmation emails to all participants.
+    try:
+        slot_start_dt = datetime.fromisoformat(slot_start)
+        slot_end_dt = datetime.fromisoformat(slot_end)
+        subject = f'Meeting booked: {summary}'
+        html = _build_booking_confirmation_html(summary, slot_start_dt, slot_end_dt, meeting_link)
+        for member in member_data:
+            if member['email']:
+                _send_resend_email(member['email'], subject, html)
+    except Exception as e:
+        print(f'Booking confirmation email failed: {e}')
 
     return {
         'success': True,
@@ -572,20 +671,116 @@ def _book_meeting_impl(
 
 @https_fn.on_call()
 def book_meeting(req: https_fn.CallableRequest) -> dict:
-    """
-    Callable Cloud Function that books the chosen slot for a meeting.
-
-    Expected input:
-        { "meetingId": "...", "slotStart": "2026-04-20T14:00:00", "slotEnd": "2026-04-20T15:00:00" }
-
-    Flow:
-        1. Verify caller is signed in and is the meeting host.
-        2. Fetch member emails and the host's Google Calendar token.
-        3. Create one organizer event on the host calendar with all members as attendees.
-        4. Update meeting status to 'scheduled' with the booked slot.
-        5. Return { success: true }.
-    """
     return _book_meeting_impl(
         data=req.data,
         auth_uid=req.auth.uid if req.auth else None,
     )
+
+
+@https_fn.on_call()
+def cancel_booking(req: https_fn.CallableRequest) -> dict:
+    """
+    Removes calendar events from all participants and optionally sends emails.
+
+    Expected input:
+        { "meetingId": "...", "action": "rebook" | "cancel" }
+
+    action='rebook'  → deletes calendar events, emails participants that a new
+                       time will be chosen, resets meeting to 'scheduling'.
+    action='cancel'  → deletes calendar events, emails a cancellation notice,
+                       deletes the meeting document.
+    """
+    if req.auth is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in.',
+        )
+
+    meeting_id: str = (req.data.get('meetingId') or '').strip()
+    action: str = (req.data.get('action') or '').strip()
+
+    if not meeting_id or action not in ('rebook', 'cancel'):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='meetingId and action ("rebook" or "cancel") are required.',
+        )
+
+    client = _get_db()
+    meeting_doc = client.collection('meetings').document(meeting_id).get()
+    if not meeting_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message='Meeting not found.',
+        )
+
+    meeting = meeting_doc.to_dict() or {}
+    if req.auth.uid != meeting.get('hostUid'):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message='Only the host can cancel or rebook a meeting.',
+        )
+
+    summary = meeting.get('name', 'Meeting')
+    meeting_link = (meeting.get('meetingLink') or '').strip()
+    member_uids: list[str] = meeting.get('memberUids', [])
+    calendar_event_ids: dict = meeting.get('calendarEventIds') or {}
+
+    # Delete the calendar event from every participant's calendar.
+    for uid, event_id in calendar_event_ids.items():
+        if not event_id:
+            continue
+        user_doc = client.collection('users').document(uid).get()
+        if not user_doc.exists:
+            continue
+        udata = user_doc.to_dict() or {}
+        access_token: str = udata.get('googleAccessToken', '')
+        refresh_token: str = udata.get('googleRefreshToken', '')
+        if not access_token and refresh_token:
+            access_token = _refresh_access_token(refresh_token) or ''
+        if access_token:
+            _delete_calendar_event(access_token, event_id)
+
+    # Collect member emails for notifications.
+    member_emails: list[str] = []
+    for uid in member_uids:
+        user_doc = client.collection('users').document(uid).get()
+        if not user_doc.exists:
+            continue
+        udata = user_doc.to_dict() or {}
+        settings = udata.get('settings') or {}
+        email = (udata.get('email') or '').strip()
+        if not email:
+            continue
+        if action == 'cancel' and not settings.get('notifyMeetingCancelled', True):
+            continue
+        member_emails.append(email)
+
+    # Send notification emails.
+    try:
+        if action == 'rebook':
+            subject = f'Meeting rescheduled: {summary}'
+            html = (
+                f'<p>The meeting <strong>{summary}</strong> is being rescheduled.</p>'
+                f'<p>The host is selecting a new time. You will receive a confirmation once booked.</p>'
+                + (f'<p><strong>Join link:</strong> <a href="{meeting_link}">{meeting_link}</a></p>' if meeting_link else '')
+            )
+        else:
+            subject = f'Meeting cancelled: {summary}'
+            html = f'<p>The meeting <strong>{summary}</strong> has been cancelled.</p>'
+
+        for email in member_emails:
+            _send_resend_email(email, subject, html)
+    except Exception as e:
+        print(f'Cancel/rebook notification email failed: {e}')
+
+    # Update or delete the Firestore meeting document.
+    if action == 'rebook':
+        client.collection('meetings').document(meeting_id).update({
+            'status': 'scheduling',
+            'scheduledSlot': None,
+            'calendarEventIds': {},
+        })
+    else:
+        client.collection('meetings').document(meeting_id).delete()
+
+    return {'success': True}
