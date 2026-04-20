@@ -1,9 +1,9 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore'
-import { signOut, deleteUser, reauthenticateWithPopup } from 'firebase/auth'
+import { deleteUser, reauthenticateWithPopup } from 'firebase/auth'
 import { toast } from 'sonner'
-import { X, Settings, LogOut, Trash2 } from 'lucide-react'
+import { X, Settings, Trash2 } from 'lucide-react'
 import { db, auth, googleProvider } from '@/lib/firebase'
 import Avatar from '@/components/Avatar'
 import { useAuthStore } from '@/store/authStore'
@@ -100,11 +100,6 @@ export default function UserProfilePanel({ open, onClose }: Props) {
     }
   }
 
-  const handleSignOut = async () => {
-    await signOut(auth)
-    navigate('/login')
-  }
-
   const handleDeleteAccount = async () => {
     if (!user || !auth.currentUser) return
     setDeleting(true)
@@ -173,15 +168,10 @@ export default function UserProfilePanel({ open, onClose }: Props) {
             <div className="flex flex-col gap-4">
               {field('p-name', 'Name', user?.displayName ?? '', () => {}, { readOnly: true })}
               {field('p-email', 'Email', user?.email ?? '', () => {}, { readOnly: true })}
-              {field('p-company', 'Company / Organization', profile.company, (v) => setProfile((p) => ({ ...p, company: v })), { placeholder: 'Acme Corp' })}
-              {field('p-role', 'Role', profile.role, (v) => setProfile((p) => ({ ...p, role: v })), { placeholder: 'e.g. Product Manager' })}
+              {field('p-company', 'Company / Organization', profile.company, (v) => setProfile((p) => ({ ...p, company: v })))}
+              {field('p-role', 'Role', profile.role, (v) => setProfile((p) => ({ ...p, role: v })))}
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="p-dob">
-                  Date of Birth
-                  {dobLocked && (
-                    <span className="ml-2 text-xs font-normal text-muted-foreground">(cannot be changed)</span>
-                  )}
-                </Label>
+                <Label htmlFor="p-dob">Date of Birth</Label>
                 <Input
                   id="p-dob"
                   type="date"
@@ -191,8 +181,8 @@ export default function UserProfilePanel({ open, onClose }: Props) {
                   className={dobLocked ? 'text-muted-foreground bg-muted cursor-not-allowed' : ''}
                 />
               </div>
-              {field('p-state', 'State', profile.state, (v) => setProfile((p) => ({ ...p, state: v })), { placeholder: 'e.g. California' })}
-              {field('p-city', 'City', profile.city, (v) => setProfile((p) => ({ ...p, city: v })), { placeholder: 'e.g. San Francisco' })}
+              {field('p-state', 'State', profile.state, (v) => setProfile((p) => ({ ...p, state: v })))}
+              {field('p-city', 'City', profile.city, (v) => setProfile((p) => ({ ...p, city: v })))}
 
               <Button onClick={handleSave} disabled={saving} className="mt-2">
                 {saving ? 'Saving...' : 'Save profile'}
@@ -206,14 +196,6 @@ export default function UserProfilePanel({ open, onClose }: Props) {
           <Button variant="ghost" className="justify-start gap-2" onClick={() => { onClose(); navigate('/app/settings') }}>
             <Settings className="size-4" />
             Go to Settings
-          </Button>
-          <Button
-            variant="ghost"
-            className="justify-start gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-            onClick={handleSignOut}
-          >
-            <LogOut className="size-4" />
-            Sign out
           </Button>
           <Button
             variant="ghost"

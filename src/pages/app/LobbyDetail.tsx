@@ -1,11 +1,11 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  doc, getDoc, getDocs, updateDoc,
+  doc, getDoc, getDocs, updateDoc, deleteDoc,
   arrayRemove, collection, query, where, writeBatch,
 } from 'firebase/firestore'
 import { toast } from 'sonner'
-import { ChevronRight, Pencil, Trash2, LogOut, X, Search, ArrowUpDown, Link2, Copy, ArrowLeft } from 'lucide-react'
+import { ChevronRight, Settings, Trash2, LogOut, X, Search, ArrowUpDown, Link2, Copy, ArrowLeft } from 'lucide-react'
 import Avatar from '@/components/Avatar'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
@@ -44,8 +44,11 @@ interface Meeting {
   name: string
   description?: string
   duration: number
+  meetingLink?: string
   status: MeetingStatus
   scheduledSlot?: { start: string; end: string }
+  memberUids?: string[]
+  members?: Member[]
   createdAt?: { seconds: number }
 }
 
@@ -82,10 +85,10 @@ export default function LobbyDetail() {
     () => Intl.DateTimeFormat().resolvedOptions().timeZone
   )
 
-  // Lobby rename
-  const [renaming, setRenaming] = useState(false)
-  const [nameEdit, setNameEdit] = useState('')
-  const [savingName, setSavingName] = useState(false)
+  // Lobby settings
+  const [showLobbySettings, setShowLobbySettings] = useState(false)
+  const [savingLobbySettings, setSavingLobbySettings] = useState(false)
+  const [lobbyForm, setLobbyForm] = useState({ name: '', description: '' })
 
   // Delete / leave
   const [showDelete, setShowDelete] = useState(false)
@@ -94,6 +97,11 @@ export default function LobbyDetail() {
 
   // Member removal
   const [removingUid, setRemovingUid] = useState<string | null>(null)
+
+  // Meeting row action
+  const [showMeetingRowAction, setShowMeetingRowAction] = useState(false)
+  const [meetingRowTarget, setMeetingRowTarget] = useState<Meeting | null>(null)
+  const [meetingRowActing, setMeetingRowActing] = useState(false)
 
   // Meetings filtering
   const [meetingSearch, setMeetingSearch] = useState('')
@@ -130,18 +138,35 @@ export default function LobbyDetail() {
     })
   }, [meetings, meetingSearch, statusFilter, meetingSortAsc])
 
-  const handleRenameSave = async () => {
-    if (!nameEdit.trim() || !lobby) return
-    setSavingName(true)
+  const openLobbySettings = () => {
+    if (!lobby) return
+    setLobbyForm({
+      name: lobby.name,
+      description: lobby.description ?? '',
+    })
+    setShowLobbySettings(true)
+  }
+
+  const handleSaveLobbySettings = async () => {
+    if (!lobby || !lobbyForm.name.trim()) return
+    setSavingLobbySettings(true)
     try {
-      await updateDoc(doc(db, 'lobbies', lobby.id), { name: nameEdit.trim() })
-      setLobby({ ...lobby, name: nameEdit.trim() })
-      setRenaming(false)
-      toast.success('Lobby renamed.')
+      const payload = {
+        name: lobbyForm.name.trim(),
+        description: lobbyForm.description.trim() || null,
+      }
+      await updateDoc(doc(db, 'lobbies', lobby.id), payload)
+      setLobby({
+        ...lobby,
+        name: payload.name,
+        description: payload.description ?? undefined,
+      })
+      toast.success('Lobby settings updated.')
+      setShowLobbySettings(false)
     } catch {
-      toast.error('Failed to rename lobby.')
+      toast.error('Failed to update lobby settings.')
     } finally {
-      setSavingName(false)
+      setSavingLobbySettings(false)
     }
   }
 
@@ -207,9 +232,44 @@ export default function LobbyDetail() {
     toast.success('Invite link copied!')
   }
 
+  const openMeetingRowAction = (meeting: Meeting) => {
+    setMeetingRowTarget(meeting)
+    setShowMeetingRowAction(true)
+  }
+
+  const handleConfirmMeetingRowAction = async () => {
+    if (!meetingRowTarget || !user) return
+    setMeetingRowActing(true)
+    try {
+      if (isHost) {
+        await deleteDoc(doc(db, 'meetings', meetingRowTarget.id))
+        setMeetings((prev) => prev.filter((m) => m.id !== meetingRowTarget.id))
+        toast.success('Meeting deleted.')
+      } else {
+        const me = meetingRowTarget.members?.find((m) => m.uid === user.uid)
+        const updates: Record<string, unknown> = { memberUids: arrayRemove(user.uid) }
+        if (me) updates.members = arrayRemove(me)
+        await updateDoc(doc(db, 'meetings', meetingRowTarget.id), updates)
+        setMeetings((prev) => prev.filter((m) => m.id !== meetingRowTarget.id))
+        toast.success('You left the meeting.')
+      }
+      setShowMeetingRowAction(false)
+      setMeetingRowTarget(null)
+    } catch {
+      toast.error(isHost ? 'Failed to delete meeting.' : 'Failed to leave meeting.')
+    } finally {
+      setMeetingRowActing(false)
+    }
+  }
+
   if (loading) return (
-    <div className="p-8">
-      <p className="text-sm text-muted-foreground">Loading lobby...</p>
+    <div className="p-6 md:p-8 space-y-4">
+      <div className="h-8 w-72 rounded-md bg-muted animate-pulse" />
+      <div className="h-32 rounded-xl border bg-muted/30 animate-pulse" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+        <div className="h-72 rounded-xl border bg-muted/30 animate-pulse" />
+        <div className="h-72 rounded-xl border bg-muted/30 animate-pulse" />
+      </div>
     </div>
   )
   if (!lobby) return null
@@ -217,47 +277,18 @@ export default function LobbyDetail() {
   const isHost = user?.uid === lobby.hostUid
 
   return (
-    <div className="flex flex-col min-h-full">
+    <div className="flex flex-col h-full min-h-0 overflow-y-auto">
 
       {/* Sticky top nav */}
       <div className="sticky top-0 z-10 bg-background border-b px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={() => navigate('/app/lobbies')}
-            className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            className="inline-flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors shrink-0"
           >
             <ArrowLeft className="size-5" />
+            <span className="text-sm font-medium">All Lobbies</span>
           </button>
-          {renaming ? (
-            <div className="flex items-center gap-2">
-              <Input
-                value={nameEdit}
-                onChange={(e) => setNameEdit(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRenameSave()
-                  if (e.key === 'Escape') setRenaming(false)
-                }}
-                className="h-8 text-base font-bold max-w-xs"
-                autoFocus
-              />
-              <Button size="sm" onClick={handleRenameSave} disabled={!nameEdit.trim() || savingName}>
-                {savingName ? 'Saving...' : 'Save'}
-              </Button>
-              <Button size="sm" variant="ghost" onClick={() => setRenaming(false)}>Cancel</Button>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-xl font-bold text-foreground truncate">{lobby.name}</span>
-              {isHost && (
-                <button
-                  onClick={() => { setNameEdit(lobby.name); setRenaming(true) }}
-                  className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                >
-                  <Pencil className="size-3.5" />
-                </button>
-              )}
-            </div>
-          )}
         </div>
         {isHost ? (
           <Button variant="destructive" size="sm" onClick={() => setShowDelete(true)} className="shrink-0">
@@ -272,36 +303,42 @@ export default function LobbyDetail() {
         )}
       </div>
 
-      {/* Lobby Overview — full width */}
-      <div className="px-8 py-6 border-b">
-        <h2 className="text-[16.5px] font-bold underline underline-offset-2 mb-2">Lobby Overview</h2>
-        {lobby.description && (
-          <p className="text-sm text-muted-foreground mb-3">
-            <span className="font-bold text-foreground">Description: </span>
-            {lobby.description}
-          </p>
-        )}
+      <div className="px-6 md:px-8 py-6 space-y-4">
+        {/* Lobby Overview */}
+        <section className="rounded-2xl border bg-card px-6 py-5">
+          <div className="flex items-center gap-2 mb-2 min-w-0">
+            <h2 className="text-[22.5px] font-bold underline underline-offset-2 truncate">{lobby.name}</h2>
+            {isHost && (
+              <button
+                onClick={openLobbySettings}
+                className="inline-flex items-center justify-center size-6 rounded-md text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                aria-label="Open lobby settings"
+                title="Lobby settings"
+              >
+                <Settings className="size-4" />
+              </button>
+            )}
+          </div>
+          {lobby.description && (
+            <p className="text-sm text-muted-foreground mb-3">{lobby.description}</p>
+          )}
 
-        {/* Metadata pills */}
-        <div className="flex flex-wrap gap-1.5 mb-[21px]">
-          {[
-            { label: 'Date Created', value: formatDate(lobby.createdAt) },
-            { label: 'Host', value: lobby.hostName },
-            { label: 'Meetings', value: String(meetings.length) },
-            { label: 'Members', value: String(lobby.memberUids.length) },
-          ].map(({ label, value }) => (
-            <span key={label} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs">
-              <span className="font-semibold text-black">{label}:</span>
-              <span className="text-black">{value}</span>
-            </span>
-          ))}
-        </div>
+          <div className="flex flex-wrap gap-1.5 mb-[25px]">
+            {[
+              { label: 'Date Created', value: formatDate(lobby.createdAt) },
+              { label: 'Host', value: lobby.hostName },
+              { label: 'Meetings', value: String(meetings.length) },
+              { label: 'Members', value: String(lobby.memberUids.length) },
+            ].map(({ label, value }) => (
+              <span key={label} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs">
+                <span className="font-semibold text-black">{label}:</span>
+                <span className="text-black">{value}</span>
+              </span>
+            ))}
+          </div>
 
-        {/* Invitation Link inline */}
-        {isHost && (
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-start gap-3">
-              <span className="text-sm font-bold whitespace-nowrap mt-[5px]">Invitation Link:</span>
+          {isHost && (
+            <div className="flex flex-col gap-1.5">
               <div className="flex flex-col gap-1 flex-1 max-w-lg min-w-0">
                 <div className="flex items-center gap-2 rounded-lg border bg-muted/40 px-3 py-1.5 min-w-0">
                   <Link2 className="size-3.5 text-muted-foreground shrink-0" />
@@ -321,20 +358,19 @@ export default function LobbyDetail() {
                 </p>
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </section>
 
-      {/* 70/30 columns — no per-column scroll */}
-      <div className="flex flex-1">
+        {/* Main columns */}
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
 
-        {/* LEFT 70% — Meetings */}
-        <div className="flex-[7] border-r px-8 py-6">
-          <h2 className="text-[16.5px] font-bold underline underline-offset-2 mb-4">Meetings</h2>
+        {/* LEFT — Meetings */}
+        <section className="rounded-2xl border bg-card px-6 md:px-8 py-6">
+          <h2 className="text-lg font-semibold tracking-tight mb-4">Meetings</h2>
 
           {/* Search + sort + New Meeting in one row */}
-          <div className="flex gap-2 mb-3">
-            <div className="relative flex-1">
+          <div className="flex flex-wrap gap-2 mb-3">
+            <div className="relative min-w-[240px] flex-1">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3 text-muted-foreground pointer-events-none" />
               <Input
                 placeholder="Search meetings..."
@@ -352,7 +388,7 @@ export default function LobbyDetail() {
               <ArrowUpDown className="size-3" />
               {meetingSortAsc ? 'Oldest' : 'Newest'}
             </Button>
-            {isHost && <div className="shrink-0"><CreateMeetingModal onCreated={fetchAll} defaultLobbyId={id} /></div>}
+            {isHost && <div className="shrink-0 ml-auto"><CreateMeetingModal onCreated={fetchAll} defaultLobbyId={id} /></div>}
           </div>
 
           {/* Status filter pills */}
@@ -378,32 +414,42 @@ export default function LobbyDetail() {
 
           {/* Meeting cards */}
           {filteredMeetings.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {meetings.length === 0 ? 'No meetings yet.' : 'No meetings match your filter.'}
-            </p>
+            <div className="rounded-xl border border-dashed p-6 text-center">
+              <p className="text-sm font-medium">
+                {meetings.length === 0 ? 'No meetings yet' : 'No meetings match your filters'}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {meetings.length === 0
+                  ? (isHost ? 'Create a meeting to start scheduling with your team.' : 'The host can create a meeting to get started.')
+                  : 'Try changing your search text or status filter.'}
+              </p>
+              {isHost && meetings.length === 0 && (
+                <div className="mt-3 flex justify-center">
+                  <CreateMeetingModal onCreated={fetchAll} defaultLobbyId={id} />
+                </div>
+              )}
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
               {filteredMeetings.map((m) => {
                 const { label, className } = meetingStatusConfig(m.status)
                 return (
-                  <button
+                  <div
                     key={m.id}
                     onClick={() => navigate(`/app/lobbies/${id}/meetings/${m.id}`)}
-                    className="w-full text-left border rounded-xl p-4 hover:bg-muted/30 transition-colors"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') navigate(`/app/lobbies/${id}/meetings/${m.id}`)
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className="w-full text-left border rounded-xl px-3 pt-3 pb-2 hover:bg-muted/30 transition-colors cursor-pointer"
                   >
-                    <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start justify-between gap-3 pb-[10px]">
                       <div className="min-w-0">
                         <p className="font-semibold text-sm leading-snug truncate">{m.name}</p>
                         {m.description && (
-                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{m.description}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5 mb-0.5 leading-relaxed break-words line-clamp-2">{m.description}</p>
                         )}
-                        <p className="text-xs text-muted-foreground mt-1.5">
-                          {m.duration} min
-                          {m.scheduledSlot && (
-                            <> · {slotDate(m.scheduledSlot.start, userTimezone)} {slotTime(m.scheduledSlot.start, userTimezone)}</>
-                          )}
-                          {m.createdAt && <> · {formatMeetingDate(m.createdAt)}</>}
-                        </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>
@@ -412,28 +458,57 @@ export default function LobbyDetail() {
                         <ChevronRight className="size-4 text-muted-foreground" />
                       </div>
                     </div>
-                  </button>
+                    <div className="border-t" />
+                    <div className="mt-[5px] flex items-center justify-between gap-3">
+                      <p className="text-xs text-muted-foreground">
+                        {m.duration} min
+                        {m.scheduledSlot && (
+                          <> · {slotDate(m.scheduledSlot.start, userTimezone)} {slotTime(m.scheduledSlot.start, userTimezone)}</>
+                        )}
+                        {m.createdAt && <> · {formatMeetingDate(m.createdAt)}</>}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          openMeetingRowAction(m)
+                        }}
+                        className="inline-flex items-center justify-center h-4 w-4 text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label={isHost ? 'Delete meeting' : 'Leave meeting'}
+                        title={isHost ? 'Delete meeting' : 'Leave meeting'}
+                      >
+                        {isHost ? <Trash2 className="size-3.5" /> : <LogOut className="size-3.5" />}
+                      </button>
+                    </div>
+                  </div>
                 )
               })}
             </div>
           )}
-        </div>
+        </section>
 
-        {/* RIGHT 30% — Participants */}
-        <div className="flex-[3] px-6 py-6">
-          <h2 className="text-[16.5px] font-bold underline underline-offset-2 mb-4">
+        {/* RIGHT — Participants */}
+        <section className="rounded-2xl border bg-card px-6 py-6">
+          <h2 className="text-lg font-semibold tracking-tight mb-4">
             Participants
           </h2>
-          <ul className="flex flex-col divide-y -mt-[10px]">
+          {lobby.members.length === 0 ? (
+            <div className="rounded-xl border border-dashed p-6 text-center">
+              <p className="text-sm font-medium">No participants yet</p>
+              <p className="text-xs text-muted-foreground mt-1">Share the invite link to bring teammates into this lobby.</p>
+            </div>
+          ) : (
+            <ul className="flex flex-col divide-y -mt-[12px]">
             {lobby.members.map((member) => {
               const isThisHost = member.uid === lobby.hostUid
               const isMe = member.uid === user?.uid
               return (
-                <li key={member.uid} className="flex items-center justify-between gap-3 py-2.5">
-                  <div className="flex items-center gap-2.5 min-w-0">
+                <li key={member.uid} className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     <Avatar src={member.photoURL} name={member.displayName} className="w-8 h-8 text-xs" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium leading-tight truncate">
+                    <div className="min-w-0 max-w-full">
+                      <p className="text-sm font-medium leading-tight truncate max-w-full">
                         {member.displayName}
                         {isMe && <span className="text-muted-foreground font-normal text-xs"> (you)</span>}
                       </p>
@@ -459,9 +534,64 @@ export default function LobbyDetail() {
                 </li>
               )
             })}
-          </ul>
-        </div>
+            </ul>
+          )}
+        </section>
       </div>
+      </div>
+
+      <Dialog open={showLobbySettings} onOpenChange={setShowLobbySettings}>
+        <DialogContent className="sm:max-w-2xl w-[95vw] max-h-[85vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Lobby Settings</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Lobby name</label>
+              <Input
+                value={lobbyForm.name}
+                onChange={(e) => setLobbyForm((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="Lobby name"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Description</label>
+              <textarea
+                rows={3}
+                value={lobbyForm.description}
+                onChange={(e) => setLobbyForm((prev) => ({ ...prev, description: e.target.value }))}
+                placeholder="What is this group for?"
+                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLobbySettings(false)} disabled={savingLobbySettings}>Cancel</Button>
+            <Button onClick={handleSaveLobbySettings} disabled={!lobbyForm.name.trim() || savingLobbySettings}>
+              {savingLobbySettings ? 'Saving...' : 'Save changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showMeetingRowAction} onOpenChange={setShowMeetingRowAction}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{isHost ? 'Delete meeting?' : 'Leave meeting?'}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {isHost
+              ? `This will permanently delete ${meetingRowTarget?.name ?? 'this meeting'}.`
+              : `You will be removed from ${meetingRowTarget?.name ?? 'this meeting'}.`}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowMeetingRowAction(false)} disabled={meetingRowActing}>Cancel</Button>
+            <Button variant="destructive" onClick={handleConfirmMeetingRowAction} disabled={meetingRowActing}>
+              {meetingRowActing
+                ? (isHost ? 'Deleting...' : 'Leaving...')
+                : (isHost ? 'Delete meeting' : 'Leave meeting')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Delete confirmation */}
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
