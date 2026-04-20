@@ -31,6 +31,8 @@ interface ProfileData {
   city: string
 }
 
+const SENSITIVE_REAUTH_MAX_AGE_MINUTES = 30
+
 export default function UserProfilePanel({ open, onClose }: Props) {
   const user = useAuthStore((state) => state.user)
   const navigate = useNavigate()
@@ -51,10 +53,22 @@ export default function UserProfilePanel({ open, onClose }: Props) {
   const [saving, setSaving] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [requiresRecentReauth, setRequiresRecentReauth] = useState(false)
 
   useEffect(() => {
     if (!open || !user) return
     setLoading(true)
+
+    const currentUser = auth.currentUser ?? user
+    const lastSignInRaw = currentUser.metadata.lastSignInTime
+    const lastSignInDate = lastSignInRaw ? new Date(lastSignInRaw) : null
+    if (!lastSignInDate || Number.isNaN(lastSignInDate.getTime())) {
+      setRequiresRecentReauth(true)
+    } else {
+      const ageMs = Date.now() - lastSignInDate.getTime()
+      setRequiresRecentReauth(ageMs > SENSITIVE_REAUTH_MAX_AGE_MINUTES * 60 * 1000)
+    }
+
     getDoc(doc(db, 'users', user.uid)).then((snap) => {
       if (snap.exists()) {
         const d = snap.data()
@@ -214,6 +228,14 @@ export default function UserProfilePanel({ open, onClose }: Props) {
 
         {/* Footer actions */}
         <div className="p-5 border-t flex flex-col gap-2 shrink-0">
+          {requiresRecentReauth && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs text-amber-900 font-medium">Re-authentication required for sensitive actions</p>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Your session is older than {SENSITIVE_REAUTH_MAX_AGE_MINUTES} minutes. Re-authenticate in Settings before deleting your account.
+              </p>
+            </div>
+          )}
           <Button variant="ghost" className="justify-start gap-2" onClick={() => { onClose(); navigate('/app/settings') }}>
             <Settings className="size-4" />
             Go to Settings
@@ -222,6 +244,7 @@ export default function UserProfilePanel({ open, onClose }: Props) {
             variant="ghost"
             className="justify-start gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
             onClick={() => setShowDeleteConfirm(true)}
+            disabled={requiresRecentReauth}
           >
             <Trash2 className="size-4" />
             Delete account

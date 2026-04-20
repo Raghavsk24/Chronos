@@ -663,10 +663,10 @@ export default function MeetingDetail() {
                         <span className="relative inline-flex items-center justify-center text-muted-foreground group/why" aria-label="Why this slot">
                           <CircleHelp className="size-4" />
                           <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-[260px] rounded-md border bg-popover p-2 text-xs text-foreground shadow-md group-hover/why:block">
-                            <p>Overall score: {slot.score.toFixed(3)}</p>
-                            <p>Position score: {slot.position_score.toFixed(3)}</p>
-                            <p>Buffer score (minimum): {slot.buffer_score.toFixed(3)}</p>
-                            <p>Buffer score (average): {slot.buffer_score_avg.toFixed(3)}</p>
+                            <p>Overall score: {(slot.score * 100).toFixed(1)}%</p>
+                            <p>Position score: {(slot.position_score * 100).toFixed(1)}%</p>
+                            <p>Buffer score (minimum): {(slot.buffer_score * 100).toFixed(1)}%</p>
+                            <p>Buffer score (average): {(slot.buffer_score_avg * 100).toFixed(1)}%</p>
                           </span>
                         </span>
                       </div>

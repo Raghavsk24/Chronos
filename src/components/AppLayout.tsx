@@ -36,7 +36,7 @@ export default function AppLayout() {
           <span className="text-lg font-bold tracking-tight">Chronos</span>
           <button
             onClick={() => setProfileOpen(true)}
-            className="group flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border border-slate-300 bg-slate-100 hover:bg-slate-200/70 transition-colors"
+            className="group flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border-[1.5px] border-slate-300 bg-slate-100 hover:bg-slate-200/70 transition-colors"
           >
             <Avatar src={user?.photoURL} name={user?.displayName} className="w-7 h-7 text-xs" />
             <span className="text-[15.5px] font-medium leading-[1.15] text-left group-hover:underline whitespace-normal break-words max-w-[160px] md:max-w-[220px]">

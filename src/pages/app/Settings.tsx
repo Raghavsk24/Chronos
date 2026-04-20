@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { doc, getDoc, setDoc, deleteDoc, deleteField } from 'firebase/firestore'
 import {
   deleteUser,
   EmailAuthProvider,
   GoogleAuthProvider,
+  getIdTokenResult,
   reauthenticateWithCredential,
   reauthenticateWithPopup,
   updatePassword,
@@ -78,6 +79,7 @@ function buildTime(hour: string, minute: string, period: string): string {
 
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
 const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'))
+const SENSITIVE_REAUTH_MAX_AGE_MINUTES = 30
 
 interface PersistedSettingsSnapshot {
   bufferMinutes: number
@@ -86,6 +88,17 @@ interface PersistedSettingsSnapshot {
   workDays: number[]
   timezone: string
   emailReminderOneHour: boolean
+  emailReminderTwentyFourHours: boolean
+  notifyMeetingCreated: boolean
+  notifyMeetingChanged: boolean
+  notifyMeetingCancelled: boolean
+}
+
+function providerLabel(providerId?: string): string {
+  if (providerId === 'google.com') return 'Google'
+  if (providerId === 'password') return 'Email and Password'
+  if (!providerId || providerId === 'unknown') return 'Unknown'
+  return providerId
 }
 
 function TimePicker({
@@ -160,11 +173,22 @@ export default function Settings() {
   const [workDays, setWorkDays] = useState<number[]>(DEFAULT_SETTINGS.workDays)
   const [timezone, setTimezone] = useState('')
   const [emailReminderOneHour, setEmailReminderOneHour] = useState(false)
+  const [emailReminderTwentyFourHours, setEmailReminderTwentyFourHours] = useState(false)
+  const [notifyMeetingCreated, setNotifyMeetingCreated] = useState(true)
+  const [notifyMeetingChanged, setNotifyMeetingChanged] = useState(true)
+  const [notifyMeetingCancelled, setNotifyMeetingCancelled] = useState(true)
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [syncingCalendar, setSyncingCalendar] = useState(false)
   const [disconnectingCalendar, setDisconnectingCalendar] = useState(false)
+  const [reauthenticating, setReauthenticating] = useState(false)
+  const [reauthPassword, setReauthPassword] = useState('')
+  const [requiresRecentReauth, setRequiresRecentReauth] = useState(false)
+
+  const [lastSignInLabel, setLastSignInLabel] = useState('Unknown')
+  const [providerUsedLabel, setProviderUsedLabel] = useState('Unknown')
+  const [linkedProviderIds, setLinkedProviderIds] = useState<string[]>([])
 
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -181,7 +205,45 @@ export default function Settings() {
     workDays: DEFAULT_SETTINGS.workDays,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     emailReminderOneHour: false,
+    emailReminderTwentyFourHours: false,
+    notifyMeetingCreated: true,
+    notifyMeetingChanged: true,
+    notifyMeetingCancelled: true,
   })
+
+  const refreshAccountActivity = useCallback(async () => {
+    const currentUser = auth.currentUser ?? user
+    if (!currentUser) {
+      setLastSignInLabel('Unknown')
+      setProviderUsedLabel('Unknown')
+      setLinkedProviderIds([])
+      setRequiresRecentReauth(false)
+      return
+    }
+
+    const linkedIds = currentUser.providerData.map((provider) => provider.providerId).filter(Boolean)
+    setLinkedProviderIds(linkedIds)
+
+    const lastSignInRaw = currentUser.metadata.lastSignInTime
+    const lastSignInDate = lastSignInRaw ? new Date(lastSignInRaw) : null
+    if (lastSignInDate && !Number.isNaN(lastSignInDate.getTime())) {
+      setLastSignInLabel(lastSignInDate.toLocaleString())
+      const ageMs = Date.now() - lastSignInDate.getTime()
+      setRequiresRecentReauth(ageMs > SENSITIVE_REAUTH_MAX_AGE_MINUTES * 60 * 1000)
+    } else {
+      setLastSignInLabel('Unknown')
+      setRequiresRecentReauth(true)
+    }
+
+    try {
+      const tokenResult = await getIdTokenResult(currentUser)
+      const signInProvider = (tokenResult.claims as { firebase?: { sign_in_provider?: string } })
+        .firebase?.sign_in_provider
+      setProviderUsedLabel(providerLabel(signInProvider ?? linkedIds[0] ?? 'unknown'))
+    } catch {
+      setProviderUsedLabel(providerLabel(linkedIds[0] ?? 'unknown'))
+    }
+  }, [user])
 
   useEffect(() => {
     if (!user) return
@@ -196,6 +258,10 @@ export default function Settings() {
         setWorkDays(s.workDays ?? DEFAULT_SETTINGS.workDays)
         setTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
         setEmailReminderOneHour(Boolean(s.emailReminderOneHour))
+        setEmailReminderTwentyFourHours(Boolean(s.emailReminderTwentyFourHours))
+        setNotifyMeetingCreated(s.notifyMeetingCreated ?? true)
+        setNotifyMeetingChanged(s.notifyMeetingChanged ?? true)
+        setNotifyMeetingCancelled(s.notifyMeetingCancelled ?? true)
         setGoogleCalendarConnected(Boolean(data.googleAccessToken))
 
         persistedSettingsRef.current = {
@@ -205,12 +271,25 @@ export default function Settings() {
           workDays: s.workDays ?? DEFAULT_SETTINGS.workDays,
           timezone: s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
           emailReminderOneHour: Boolean(s.emailReminderOneHour),
+          emailReminderTwentyFourHours: Boolean(s.emailReminderTwentyFourHours),
+          notifyMeetingCreated: s.notifyMeetingCreated ?? true,
+          notifyMeetingChanged: s.notifyMeetingChanged ?? true,
+          notifyMeetingCancelled: s.notifyMeetingCancelled ?? true,
         }
       }
+      await refreshAccountActivity()
       setLoading(false)
     }
     fetchSettings()
-  }, [user])
+  }, [user, refreshAccountActivity])
+
+  useEffect(() => {
+    if (!user) return
+    const intervalId = window.setInterval(() => {
+      refreshAccountActivity()
+    }, 60 * 1000)
+    return () => window.clearInterval(intervalId)
+  }, [user, refreshAccountActivity])
 
   const toggleDay = (day: number) => {
     setWorkDays((prev) =>
@@ -228,6 +307,10 @@ export default function Settings() {
       workDays: [...workDays],
       timezone,
       emailReminderOneHour,
+      emailReminderTwentyFourHours,
+      notifyMeetingCreated,
+      notifyMeetingChanged,
+      notifyMeetingCancelled,
     }
 
     const [startHour, startMinute] = optimisticSettings.workStart.split(':').map(Number)
@@ -247,6 +330,10 @@ export default function Settings() {
     setWorkDays(optimisticSettings.workDays)
     setTimezone(optimisticSettings.timezone)
     setEmailReminderOneHour(optimisticSettings.emailReminderOneHour)
+    setEmailReminderTwentyFourHours(optimisticSettings.emailReminderTwentyFourHours)
+    setNotifyMeetingCreated(optimisticSettings.notifyMeetingCreated)
+    setNotifyMeetingChanged(optimisticSettings.notifyMeetingChanged)
+    setNotifyMeetingCancelled(optimisticSettings.notifyMeetingCancelled)
 
     setSaving(true)
     try {
@@ -262,6 +349,10 @@ export default function Settings() {
             workDays: optimisticSettings.workDays,
             timezone: optimisticSettings.timezone,
             emailReminderOneHour: optimisticSettings.emailReminderOneHour,
+            emailReminderTwentyFourHours: optimisticSettings.emailReminderTwentyFourHours,
+            notifyMeetingCreated: optimisticSettings.notifyMeetingCreated,
+            notifyMeetingChanged: optimisticSettings.notifyMeetingChanged,
+            notifyMeetingCancelled: optimisticSettings.notifyMeetingCancelled,
           },
         },
         { merge: true }
@@ -275,9 +366,47 @@ export default function Settings() {
       setWorkDays(previousSettings.workDays)
       setTimezone(previousSettings.timezone)
       setEmailReminderOneHour(previousSettings.emailReminderOneHour)
+      setEmailReminderTwentyFourHours(previousSettings.emailReminderTwentyFourHours)
+      setNotifyMeetingCreated(previousSettings.notifyMeetingCreated)
+      setNotifyMeetingChanged(previousSettings.notifyMeetingChanged)
+      setNotifyMeetingCancelled(previousSettings.notifyMeetingCancelled)
       toast.error('Failed to save settings.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleReauthenticate = async () => {
+    if (!auth.currentUser || !user) return
+    setReauthenticating(true)
+
+    try {
+      const hasGoogle = linkedProviderIds.includes('google.com')
+      const hasPassword = linkedProviderIds.includes('password')
+
+      if (!hasGoogle && hasPassword) {
+        if (!user.email) {
+          toast.error('No email found for this account.')
+          return
+        }
+        if (!reauthPassword) {
+          toast.error('Enter your current password to re-authenticate.')
+          return
+        }
+        const credential = EmailAuthProvider.credential(user.email, reauthPassword)
+        await reauthenticateWithCredential(auth.currentUser, credential)
+        setReauthPassword('')
+      } else {
+        await reauthenticateWithPopup(auth.currentUser, googleProvider)
+      }
+
+      await refreshAccountActivity()
+      setRequiresRecentReauth(false)
+      toast.success('Re-authentication complete.')
+    } catch {
+      toast.error('Re-authentication failed. Please try again.')
+    } finally {
+      setReauthenticating(false)
     }
   }
 
@@ -317,6 +446,10 @@ export default function Settings() {
 
   const handleDisconnectCalendar = async () => {
     if (!user) return
+    if (requiresRecentReauth) {
+      toast.error('Re-authentication is required before disconnecting Google Calendar.')
+      return
+    }
     setDisconnectingCalendar(true)
     try {
       await setDoc(
@@ -374,6 +507,10 @@ export default function Settings() {
 
   const handleDeleteAccount = async () => {
     if (!user || !auth.currentUser) return
+    if (requiresRecentReauth) {
+      toast.error('Re-authentication is required before deleting your account.')
+      return
+    }
     setDeleting(true)
     try {
       await deleteDoc(doc(db, 'users', user.uid))
@@ -399,7 +536,7 @@ export default function Settings() {
         <h1 className="text-2xl font-bold tracking-tight mb-1">Settings</h1>
         <p className="text-sm text-muted-foreground mb-8">Manage your availability and account.</p>
 
-        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_1px_1fr] lg:gap-0">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_2px_1fr] lg:gap-0">
 
           {/* Availability */}
           <div className="lg:pr-10">
@@ -491,7 +628,7 @@ export default function Settings() {
           </div>
 
           {/* Divider */}
-          <div className="hidden lg:block bg-border" />
+          <div className="hidden lg:block w-[2px] bg-border" />
 
           {/* Account Settings */}
           <div className="lg:pl-10">
@@ -500,6 +637,34 @@ export default function Settings() {
               description="Manage your account and data."
             >
             <div className="border rounded-xl p-4 flex flex-col gap-4">
+              {requiresRecentReauth && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex flex-col gap-2">
+                  <p className="text-sm font-medium text-amber-900">Re-authentication required for sensitive actions</p>
+                  <p className="text-xs text-amber-800">
+                    Your session is older than {SENSITIVE_REAUTH_MAX_AGE_MINUTES} minutes. Re-authenticate to disconnect Google Calendar or delete your account.
+                  </p>
+                  {linkedProviderIds.includes('password') && !linkedProviderIds.includes('google.com') && (
+                    <Input
+                      type="password"
+                      placeholder="Current password"
+                      value={reauthPassword}
+                      onChange={(e) => setReauthPassword(e.target.value)}
+                    />
+                  )}
+                  <div>
+                    <Button size="sm" variant="outline" onClick={handleReauthenticate} disabled={reauthenticating}>
+                      {reauthenticating ? 'Re-authenticating...' : 'Re-authenticate'}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              <div className="border rounded-lg p-3 flex flex-col gap-1.5">
+                <p className="text-sm font-medium">Account activity</p>
+                <p className="text-xs text-muted-foreground">Last sign in: {lastSignInLabel}</p>
+                <p className="text-xs text-muted-foreground">Provider used: {providerUsedLabel}</p>
+              </div>
+
               <div className="border rounded-lg p-3 flex items-center justify-between gap-4">
                 <div>
                   <p className="text-sm font-medium">Google Calendar connection</p>
@@ -513,6 +678,7 @@ export default function Settings() {
                     size="sm"
                     className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => setShowDisconnectCalendarConfirm(true)}
+                    disabled={requiresRecentReauth}
                   >
                     Disconnect
                   </Button>
@@ -530,27 +696,108 @@ export default function Settings() {
                 )}
               </div>
 
-              <div className="border rounded-lg p-3 flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium">Email reminders</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Send an email reminder 1 hour before a scheduled meeting.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEmailReminderOneHour((v) => !v)}
-                  className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
-                    emailReminderOneHour ? 'bg-primary' : 'bg-muted'
-                  }`}
-                  aria-label="Toggle one-hour email reminders"
-                >
-                  <span
-                    className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                      emailReminderOneHour ? 'translate-x-4' : 'translate-x-0'
+              <div className="border rounded-lg p-3 flex flex-col gap-3">
+                <p className="text-sm font-medium">Notifications</p>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm">Email reminder 1 hour before</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEmailReminderOneHour((v) => !v)}
+                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
+                      emailReminderOneHour ? 'bg-primary' : 'bg-muted'
                     }`}
-                  />
-                </button>
+                    aria-label="Toggle one-hour email reminders"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        emailReminderOneHour ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm">Email reminder 24 hours before</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEmailReminderTwentyFourHours((v) => !v)}
+                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
+                      emailReminderTwentyFourHours ? 'bg-primary' : 'bg-muted'
+                    }`}
+                    aria-label="Toggle twenty-four-hour email reminders"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        emailReminderTwentyFourHours ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm">Meeting created</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNotifyMeetingCreated((v) => !v)}
+                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
+                      notifyMeetingCreated ? 'bg-primary' : 'bg-muted'
+                    }`}
+                    aria-label="Toggle meeting-created notifications"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        notifyMeetingCreated ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm">Meeting changed</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNotifyMeetingChanged((v) => !v)}
+                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
+                      notifyMeetingChanged ? 'bg-primary' : 'bg-muted'
+                    }`}
+                    aria-label="Toggle meeting-changed notifications"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        notifyMeetingChanged ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm">Meeting cancelled</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNotifyMeetingCancelled((v) => !v)}
+                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
+                      notifyMeetingCancelled ? 'bg-primary' : 'bg-muted'
+                    }`}
+                    aria-label="Toggle meeting-cancelled notifications"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                        notifyMeetingCancelled ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
 
               <div className="border rounded-lg p-3 flex flex-col gap-2.5">
@@ -597,6 +844,7 @@ export default function Settings() {
                 size="sm"
                 className="shrink-0"
                 onClick={() => setShowDeleteConfirm(true)}
+                disabled={requiresRecentReauth}
               >
                 Delete
               </Button>
