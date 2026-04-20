@@ -125,6 +125,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     buffer_by_participant: dict = {}
     work_hours_by_participant: dict = {}
     work_days_by_participant: dict = {}
+    included_members: list[str] = []
     ignored_members: list[str] = []
 
     for uid in member_uids:
@@ -158,13 +159,20 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             'timezone':     settings.get('timezone', 'UTC'),
         }
         work_days_by_participant[uid] = settings.get('workDays', [0, 1, 2, 3, 4])
+        included_members.append(display_name)
 
     if not work_days_by_participant:
         return {
             'error': (
                 'No participants have Google Calendar connected. '
                 'Connect Google Calendar in account settings to run scheduling.'
-            )
+            ),
+            'coverage': {
+                'includedCount': 0,
+                'ignoredCount': len(ignored_members),
+                'includedMembers': [],
+                'ignoredMembers': ignored_members,
+            },
         }
 
     # --- 3. Run the scheduling algorithm ---
@@ -184,6 +192,13 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             'Some participants were ignored because Google Calendar is not connected: '
             + ', '.join(ignored_members)
         )
+
+    result['coverage'] = {
+        'includedCount': len(included_members),
+        'ignoredCount': len(ignored_members),
+        'includedMembers': included_members,
+        'ignoredMembers': ignored_members,
+    }
 
     return result
 

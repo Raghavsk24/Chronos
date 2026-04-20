@@ -4,7 +4,7 @@ import { arrayRemove, deleteDoc, doc, getDoc, updateDoc } from 'firebase/firesto
 import { httpsCallable } from 'firebase/functions'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, CheckCircle2, Settings, Trash2, LogOut, RotateCcw, X } from 'lucide-react'
+import { ArrowLeft, ExternalLink, CheckCircle2, CircleHelp, Settings, Trash2, LogOut, RotateCcw, X } from 'lucide-react'
 import { db, functions } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import Avatar from '@/components/Avatar'
@@ -105,6 +105,13 @@ interface Slot {
   buffer_score_avg: number
 }
 
+interface CoverageSummary {
+  includedCount: number
+  ignoredCount: number
+  includedMembers: string[]
+  ignoredMembers: string[]
+}
+
 const GOOGLE_TOKEN_STALE_MINUTES = 55
 
 function isGoogleTokenFresh(tokenUpdatedAt: FirestoreTimestampLike): boolean {
@@ -150,6 +157,7 @@ export default function MeetingDetail() {
   const [calendarConnectionReady, setCalendarConnectionReady] = useState(false)
   const [calendarConnectionReason, setCalendarConnectionReason] = useState('Checking Google Calendar connection...')
   const [calendarConnectionByUid, setCalendarConnectionByUid] = useState<Record<string, boolean>>({})
+  const [coverageSummary, setCoverageSummary] = useState<CoverageSummary | null>(null)
 
   // Meeting settings
   const [showSettings, setShowSettings] = useState(false)
@@ -269,7 +277,15 @@ export default function MeetingDetail() {
     setScheduleError('')
     try {
       const result = await scheduleMeeting({ meetingId: meeting.id })
-      const data = result.data as { slots?: Slot[]; error?: string; warning?: string }
+      const data = result.data as {
+        slots?: Slot[]
+        error?: string
+        warning?: string
+        coverage?: CoverageSummary
+      }
+
+      if (data.coverage) setCoverageSummary(data.coverage)
+
       if (data.error) {
         setScheduleError(data.error)
       } else {
@@ -451,7 +467,7 @@ export default function MeetingDetail() {
   })()
 
   return (
-    <div className="flex flex-col min-h-full">
+    <div className="h-[calc(100vh-3.5rem)] overflow-y-auto">
       {/* Sticky top nav */}
       <div className="sticky top-0 z-10 bg-background border-b px-6 py-3 flex items-center justify-between">
         <button
@@ -609,6 +625,20 @@ export default function MeetingDetail() {
 
             {scheduleError && <p className="text-sm text-destructive">{scheduleError}</p>}
 
+            {coverageSummary && (
+              <div className="rounded-lg border bg-muted/30 px-3 py-2">
+                <p className="text-xs text-muted-foreground">
+                  Included participants: <span className="font-medium text-foreground">{coverageSummary.includedCount}</span>
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Ignored participants: <span className="font-medium text-foreground">{coverageSummary.ignoredCount}</span>
+                  {coverageSummary.ignoredMembers.length > 0 && (
+                    <> ({coverageSummary.ignoredMembers.join(', ')})</>
+                  )}
+                </p>
+              </div>
+            )}
+
             {slots.length > 0 && (
               <div className="flex flex-col gap-2">
                 <p className="text-sm text-muted-foreground">Select a time to book:</p>
@@ -622,11 +652,24 @@ export default function MeetingDetail() {
                         isSelected ? 'border-primary bg-primary/5' : 'hover:bg-accent'
                       }`}
                     >
-                      <p className="font-medium text-sm">{slotDate(slot.start, userTimezone)}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {slotTime(slot.start, userTimezone)} - {slotTime(slot.end, userTimezone)}{' '}
-                        ({tzAbbr(slot.start, userTimezone)})
-                      </p>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="font-medium text-sm">{slotDate(slot.start, userTimezone)}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {slotTime(slot.start, userTimezone)} - {slotTime(slot.end, userTimezone)}{' '}
+                            ({tzAbbr(slot.start, userTimezone)})
+                          </p>
+                        </div>
+                        <span className="relative inline-flex items-center justify-center text-muted-foreground group/why" aria-label="Why this slot">
+                          <CircleHelp className="size-4" />
+                          <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-[260px] rounded-md border bg-popover p-2 text-xs text-foreground shadow-md group-hover/why:block">
+                            <p>Overall score: {slot.score.toFixed(3)}</p>
+                            <p>Position score: {slot.position_score.toFixed(3)}</p>
+                            <p>Buffer score (minimum): {slot.buffer_score.toFixed(3)}</p>
+                            <p>Buffer score (average): {slot.buffer_score_avg.toFixed(3)}</p>
+                          </span>
+                        </span>
+                      </div>
                     </button>
                   )
                 })}
