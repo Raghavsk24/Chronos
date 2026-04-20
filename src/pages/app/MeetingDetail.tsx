@@ -104,6 +104,25 @@ interface Slot {
   buffer_score_avg: number
 }
 
+const GOOGLE_TOKEN_STALE_MINUTES = 55
+
+function isGoogleTokenFresh(tokenUpdatedAt: FirestoreTimestampLike): boolean {
+  if (!tokenUpdatedAt) return false
+
+  let tokenDate: Date | null = null
+  if (tokenUpdatedAt instanceof Date) tokenDate = tokenUpdatedAt
+  else if (typeof tokenUpdatedAt === 'string' || typeof tokenUpdatedAt === 'number') tokenDate = new Date(tokenUpdatedAt)
+  else if (typeof (tokenUpdatedAt as { toDate?: () => Date }).toDate === 'function') {
+    tokenDate = (tokenUpdatedAt as { toDate: () => Date }).toDate()
+  } else if (typeof (tokenUpdatedAt as { seconds?: number }).seconds === 'number') {
+    tokenDate = new Date((tokenUpdatedAt as { seconds: number }).seconds * 1000)
+  }
+
+  if (!tokenDate || Number.isNaN(tokenDate.getTime())) return false
+  const ageMs = Date.now() - tokenDate.getTime()
+  return ageMs <= GOOGLE_TOKEN_STALE_MINUTES * 60 * 1000
+}
+
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
 
@@ -127,6 +146,8 @@ export default function MeetingDetail() {
   const [bookingError, setBookingError] = useState('')
   const [completing, setCompleting] = useState(false)
   const [rebooking, setRebooking] = useState(false)
+  const [calendarConnectionReady, setCalendarConnectionReady] = useState(false)
+  const [calendarConnectionReason, setCalendarConnectionReason] = useState('Checking Google Calendar connection...')
 
   // Meeting settings
   const [showSettings, setShowSettings] = useState(false)
@@ -149,6 +170,35 @@ export default function MeetingDetail() {
   const [showLeave, setShowLeave] = useState(false)
   const [acting, setActing] = useState(false)
 
+  const refreshCalendarConnectionState = useCallback(async () => {
+    if (!user) return
+    const userSnap = await getDoc(doc(db, 'users', user.uid))
+    if (!userSnap.exists()) {
+      setCalendarConnectionReady(false)
+      setCalendarConnectionReason('Unable to verify your Google Calendar connection.')
+      return
+    }
+
+    const userData = userSnap.data()
+    const hasToken = Boolean(userData.googleAccessToken)
+    const tokenFresh = isGoogleTokenFresh(userData.tokenUpdatedAt as FirestoreTimestampLike)
+
+    if (!hasToken) {
+      setCalendarConnectionReady(false)
+      setCalendarConnectionReason('Google Calendar is not connected. Reconnect it in Settings before scheduling.')
+      return
+    }
+
+    if (!tokenFresh) {
+      setCalendarConnectionReady(false)
+      setCalendarConnectionReason('Google Calendar access may be expired. Reconnect in Settings before scheduling.')
+      return
+    }
+
+    setCalendarConnectionReady(true)
+    setCalendarConnectionReason('')
+  }, [user])
+
   const fetchMeeting = useCallback(async () => {
     if (!meetingId || !user) return
     const [meetingSnap, userSnap] = await Promise.all([
@@ -164,8 +214,39 @@ export default function MeetingDetail() {
 
   useEffect(() => { fetchMeeting() }, [fetchMeeting])
 
+  useEffect(() => {
+    if (!user) return
+    let mounted = true
+
+    const runCheck = async () => {
+      if (!mounted) return
+      try {
+        await refreshCalendarConnectionState()
+      } catch {
+        if (mounted) {
+          setCalendarConnectionReady(false)
+          setCalendarConnectionReason('Unable to verify your Google Calendar connection.')
+        }
+      }
+    }
+
+    runCheck()
+    const intervalId = window.setInterval(runCheck, 60 * 1000)
+
+    return () => {
+      mounted = false
+      window.clearInterval(intervalId)
+    }
+  }, [user, refreshCalendarConnectionState])
+
   const handleFindSlots = async () => {
     if (!meeting) return
+    if (!calendarConnectionReady) {
+      setScheduleError(calendarConnectionReason)
+      toast.error('Reconnect Google Calendar in Settings before scheduling.')
+      return
+    }
+
     setFinding(true)
     setSlots([])
     setSelectedSlot(null)
@@ -482,6 +563,20 @@ export default function MeetingDetail() {
           </div>
         ) : isHost ? (
           <>
+            {!calendarConnectionReady && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex items-start justify-between gap-3">
+                <p className="text-xs text-amber-800">{calendarConnectionReason}</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => navigate('/app/settings')}
+                >
+                  Open Settings
+                </Button>
+              </div>
+            )}
+
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 className="font-semibold">Find a meeting time</h2>
@@ -490,7 +585,7 @@ export default function MeetingDetail() {
                 </p>
               </div>
               <div className="shrink-0">
-                <Button onClick={handleFindSlots} disabled={finding || booking}>
+                <Button onClick={handleFindSlots} disabled={finding || booking || !calendarConnectionReady}>
                   {finding ? 'Searching...' : 'Find Meeting Times'}
                 </Button>
               </div>

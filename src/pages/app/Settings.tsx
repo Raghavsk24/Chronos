@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { doc, getDoc, setDoc, deleteDoc, deleteField } from 'firebase/firestore'
 import {
   deleteUser,
@@ -78,6 +78,15 @@ function buildTime(hour: string, minute: string, period: string): string {
 
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
 const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'))
+
+interface PersistedSettingsSnapshot {
+  bufferMinutes: number
+  workStart: string
+  workEnd: string
+  workDays: number[]
+  timezone: string
+  emailReminderOneHour: boolean
+}
 
 function TimePicker({
   value,
@@ -165,6 +174,14 @@ export default function Settings() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showDisconnectCalendarConfirm, setShowDisconnectCalendarConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const persistedSettingsRef = useRef<PersistedSettingsSnapshot>({
+    bufferMinutes: DEFAULT_SETTINGS.bufferMinutes,
+    workStart: DEFAULT_SETTINGS.workStart,
+    workEnd: DEFAULT_SETTINGS.workEnd,
+    workDays: DEFAULT_SETTINGS.workDays,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    emailReminderOneHour: false,
+  })
 
   useEffect(() => {
     if (!user) return
@@ -180,6 +197,15 @@ export default function Settings() {
         setTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
         setEmailReminderOneHour(Boolean(s.emailReminderOneHour))
         setGoogleCalendarConnected(Boolean(data.googleAccessToken))
+
+        persistedSettingsRef.current = {
+          bufferMinutes: s.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes,
+          workStart: toTimeString(s.workStartHour ?? 9, s.workStartMinute ?? 0),
+          workEnd: toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0),
+          workDays: s.workDays ?? DEFAULT_SETTINGS.workDays,
+          timezone: s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+          emailReminderOneHour: Boolean(s.emailReminderOneHour),
+        }
       }
       setLoading(false)
     }
@@ -194,36 +220,61 @@ export default function Settings() {
 
   const handleSave = async () => {
     if (!user) return
-    const [startHour, startMinute] = workStart.split(':').map(Number)
-    const [endHour, endMinute] = workEnd.split(':').map(Number)
+    const previousSettings = persistedSettingsRef.current
+    const optimisticSettings: PersistedSettingsSnapshot = {
+      bufferMinutes,
+      workStart,
+      workEnd,
+      workDays: [...workDays],
+      timezone,
+      emailReminderOneHour,
+    }
+
+    const [startHour, startMinute] = optimisticSettings.workStart.split(':').map(Number)
+    const [endHour, endMinute] = optimisticSettings.workEnd.split(':').map(Number)
     if (endHour * 60 + endMinute <= startHour * 60 + startMinute) {
       toast.error('Work end time must be after start time.')
       return
     }
-    if (workDays.length === 0) {
+    if (optimisticSettings.workDays.length === 0) {
       toast.error('Select at least one work day.')
       return
     }
+
+    setBufferMinutes(optimisticSettings.bufferMinutes)
+    setWorkStart(optimisticSettings.workStart)
+    setWorkEnd(optimisticSettings.workEnd)
+    setWorkDays(optimisticSettings.workDays)
+    setTimezone(optimisticSettings.timezone)
+    setEmailReminderOneHour(optimisticSettings.emailReminderOneHour)
+
     setSaving(true)
     try {
       await setDoc(
         doc(db, 'users', user.uid),
         {
           settings: {
-            bufferMinutes,
+            bufferMinutes: optimisticSettings.bufferMinutes,
             workStartHour: startHour,
             workStartMinute: startMinute,
             workEndHour: endHour,
             workEndMinute: endMinute,
-            workDays,
-            timezone,
-            emailReminderOneHour,
+            workDays: optimisticSettings.workDays,
+            timezone: optimisticSettings.timezone,
+            emailReminderOneHour: optimisticSettings.emailReminderOneHour,
           },
         },
         { merge: true }
       )
+      persistedSettingsRef.current = optimisticSettings
       toast.success('Settings saved.')
     } catch {
+      setBufferMinutes(previousSettings.bufferMinutes)
+      setWorkStart(previousSettings.workStart)
+      setWorkEnd(previousSettings.workEnd)
+      setWorkDays(previousSettings.workDays)
+      setTimezone(previousSettings.timezone)
+      setEmailReminderOneHour(previousSettings.emailReminderOneHour)
       toast.error('Failed to save settings.')
     } finally {
       setSaving(false)

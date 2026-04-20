@@ -35,6 +35,13 @@ export default function UserProfilePanel({ open, onClose }: Props) {
   const user = useAuthStore((state) => state.user)
   const navigate = useNavigate()
   const panelRef = useRef<HTMLDivElement>(null)
+  const persistedProfileRef = useRef<ProfileData>({
+    company: '',
+    role: '',
+    dateOfBirth: '',
+    state: '',
+    city: '',
+  })
 
   const [profile, setProfile] = useState<ProfileData>({
     company: '', role: '', dateOfBirth: '', state: '', city: '',
@@ -52,13 +59,15 @@ export default function UserProfilePanel({ open, onClose }: Props) {
       if (snap.exists()) {
         const d = snap.data()
         const dob = d.dateOfBirth ?? ''
-        setProfile({
+        const fetchedProfile = {
           company: d.company ?? '',
           role: d.role ?? '',
           dateOfBirth: dob,
           state: d.state ?? '',
           city: d.city ?? '',
-        })
+        }
+        setProfile(fetchedProfile)
+        persistedProfileRef.current = fetchedProfile
         setDobLocked(!!dob)
       }
       setLoading(false)
@@ -83,17 +92,29 @@ export default function UserProfilePanel({ open, onClose }: Props) {
 
   const handleSave = async () => {
     if (!user) return
+    const previousProfile = persistedProfileRef.current
+    const optimisticProfile: ProfileData = {
+      company: profile.company.trim(),
+      role: profile.role.trim(),
+      dateOfBirth: dobLocked ? previousProfile.dateOfBirth : (profile.dateOfBirth || ''),
+      state: profile.state.trim(),
+      city: profile.city.trim(),
+    }
+
+    setProfile(optimisticProfile)
     setSaving(true)
     try {
       await updateDoc(doc(db, 'users', user.uid), {
-        company: profile.company.trim() || null,
-        role: profile.role.trim() || null,
-        ...(dobLocked ? {} : { dateOfBirth: profile.dateOfBirth || null }),
-        state: profile.state.trim() || null,
-        city: profile.city.trim() || null,
+        company: optimisticProfile.company || null,
+        role: optimisticProfile.role || null,
+        ...(dobLocked ? {} : { dateOfBirth: optimisticProfile.dateOfBirth || null }),
+        state: optimisticProfile.state || null,
+        city: optimisticProfile.city || null,
       })
+      persistedProfileRef.current = optimisticProfile
       toast.success('Profile saved.')
     } catch {
+      setProfile(previousProfile)
       toast.error('Failed to save profile.')
     } finally {
       setSaving(false)
