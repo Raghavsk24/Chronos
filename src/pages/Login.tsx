@@ -30,6 +30,18 @@ type PasswordLinkIntent = {
   lastName?: string
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+const NAME_REGEX = /^[A-Za-z][A-Za-z' -]*$/
+
+function isValidEmail(email: string): boolean {
+  return EMAIL_REGEX.test(email)
+}
+
+function isValidName(name: string): boolean {
+  const trimmed = name.trim()
+  return trimmed.length >= 2 && trimmed.length <= 40 && NAME_REGEX.test(trimmed)
+}
+
 export default function Login() {
   const navigate = useNavigate()
   const [mode, setMode] = useState<AuthMode>('signin')
@@ -179,8 +191,23 @@ export default function Login() {
       return
     }
 
+    if (!isValidEmail(trimmedEmail)) {
+      toast.error('Invalid email address. Use a format like name@example.com.')
+      return
+    }
+
     if (mode === 'signup' && (!trimmedFirstName || !trimmedLastName)) {
       toast.error('Enter your first and last name.')
+      return
+    }
+
+    if (mode === 'signup' && !isValidName(trimmedFirstName)) {
+      toast.error('Invalid first name. Use 2-40 letters.')
+      return
+    }
+
+    if (mode === 'signup' && !isValidName(trimmedLastName)) {
+      toast.error('Invalid last name. Use 2-40 letters.')
       return
     }
 
@@ -232,12 +259,24 @@ export default function Login() {
       }
 
       if (error instanceof FirebaseError && mode === 'signin') {
+        if (error.code === 'auth/invalid-email') {
+          toast.error('Invalid email address. Use a format like name@example.com.')
+          return
+        }
+
+        if (error.code === 'auth/wrong-password') {
+          toast.error('Incorrect password. Please try again.')
+          return
+        }
+
+        if (error.code === 'auth/user-not-found') {
+          toast.error('No account exists for this email address.')
+          return
+        }
+
         const shouldOfferGoogleLink = [
           'auth/invalid-credential',
           'auth/invalid-login-credentials',
-          'auth/user-not-found',
-          'auth/wrong-password',
-          'auth/invalid-email',
         ].includes(error.code)
 
         if (shouldOfferGoogleLink) {
@@ -267,6 +306,16 @@ export default function Login() {
           lastName: trimmedLastName,
         })
         toast.info('This email already exists. If it is a Google account, continue with Google below to link a password.')
+        return
+      }
+
+      if (error instanceof FirebaseError && mode === 'signup' && error.code === 'auth/invalid-email') {
+        toast.error('Invalid email address. Use a format like name@example.com.')
+        return
+      }
+
+      if (error instanceof FirebaseError && mode === 'signup' && error.code === 'auth/weak-password') {
+        toast.error('Password is too weak. Use at least 6 characters.')
         return
       }
 

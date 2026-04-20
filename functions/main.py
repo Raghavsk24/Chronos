@@ -125,7 +125,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     buffer_by_participant: dict = {}
     work_hours_by_participant: dict = {}
     work_days_by_participant: dict = {}
-    expired_token_members: list[str] = []
+    ignored_members: list[str] = []
 
     for uid in member_uids:
         user_doc = client.collection('users').document(uid).get()
@@ -135,14 +135,18 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         user_data: dict = user_doc.to_dict() or {}
         settings: dict = user_data.get('settings', {})
         access_token: str = user_data.get('googleAccessToken', '')
+        display_name = user_data.get('displayName', uid)
 
-        if access_token:
-            busy = _fetch_busy_slots(access_token, search_start)
-            if busy is None:
-                expired_token_members.append(user_data.get('displayName', uid))
-                busy = []
-        else:
-            busy = []
+        # Ignore members who do not have a usable Google Calendar token.
+        # Scheduling still proceeds using the connected subset.
+        if not access_token:
+            ignored_members.append(display_name)
+            continue
+
+        busy = _fetch_busy_slots(access_token, search_start)
+        if busy is None:
+            ignored_members.append(display_name)
+            continue
 
         busy_slots_by_participant[uid] = busy
         buffer_by_participant[uid] = settings.get('bufferMinutes', 15)
@@ -156,14 +160,10 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         work_days_by_participant[uid] = settings.get('workDays', [0, 1, 2, 3, 4])
 
     if not work_days_by_participant:
-        return {'error': 'No member settings found. Ask all members to complete their settings.'}
-
-    if expired_token_members:
-        names = ', '.join(expired_token_members)
         return {
             'error': (
-                f'Google Calendar access has expired for: {names}. '
-                'Ask them to sign out and sign back in to refresh access.'
+                'No participants have Google Calendar connected. '
+                'Connect Google Calendar in account settings to run scheduling.'
             )
         }
 
@@ -178,6 +178,12 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         max_weeks=MAX_WEEKS,
         preferences=preferences,
     )
+
+    if ignored_members and 'error' not in result:
+        result['warning'] = (
+            'Some participants were ignored because Google Calendar is not connected: '
+            + ', '.join(ignored_members)
+        )
 
     return result
 

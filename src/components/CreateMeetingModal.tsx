@@ -47,6 +47,14 @@ function toIsoDate(date: Date): string {
   return `${y}-${m}-${d}`
 }
 
+function todayExampleDate(): string {
+  const now = new Date()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  const y = String(now.getFullYear())
+  return `${m}/${d}/${y}`
+}
+
 export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props) {
   const user = useAuthStore((state) => state.user)
   const [open, setOpen] = useState(false)
@@ -95,7 +103,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
 
   const addTargetDate = () => {
     const iso = toIsoDate(selectedTargetDate)
-    if (!iso) { toast.error('Invalid date. Try formats like 1/20/2026.'); return }
+    if (!iso) { toast.error(`Invalid date. Try formats like ${todayExampleDate()}.`); return }
     if (!targetDates.includes(iso)) setTargetDates((prev) => [...prev, iso])
   }
 

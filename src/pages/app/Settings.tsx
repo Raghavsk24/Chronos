@@ -1,11 +1,20 @@
 import { useState, useEffect } from 'react'
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore'
-import { deleteUser } from 'firebase/auth'
+import { doc, getDoc, setDoc, deleteDoc, deleteField } from 'firebase/firestore'
+import {
+  deleteUser,
+  EmailAuthProvider,
+  GoogleAuthProvider,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
+  updatePassword,
+} from 'firebase/auth'
+import { RefreshCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { db, auth } from '@/lib/firebase'
+import { db, auth, googleProvider } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
@@ -141,10 +150,20 @@ export default function Settings() {
   const [workEnd, setWorkEnd] = useState(DEFAULT_SETTINGS.workEnd)
   const [workDays, setWorkDays] = useState<number[]>(DEFAULT_SETTINGS.workDays)
   const [timezone, setTimezone] = useState('')
+  const [emailReminderOneHour, setEmailReminderOneHour] = useState(false)
+  const [googleCalendarConnected, setGoogleCalendarConnected] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [syncingCalendar, setSyncingCalendar] = useState(false)
+  const [disconnectingCalendar, setDisconnectingCalendar] = useState(false)
+
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [changingPassword, setChangingPassword] = useState(false)
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [showDisconnectCalendarConfirm, setShowDisconnectCalendarConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
@@ -152,12 +171,15 @@ export default function Settings() {
     const fetchSettings = async () => {
       const snap = await getDoc(doc(db, 'users', user.uid))
       if (snap.exists()) {
+        const data = snap.data()
         const s = snap.data().settings ?? {}
         setBufferMinutes(s.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes)
         setWorkStart(toTimeString(s.workStartHour ?? 9, s.workStartMinute ?? 0))
         setWorkEnd(toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0))
         setWorkDays(s.workDays ?? DEFAULT_SETTINGS.workDays)
         setTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
+        setEmailReminderOneHour(Boolean(s.emailReminderOneHour))
+        setGoogleCalendarConnected(Boolean(data.googleAccessToken))
       }
       setLoading(false)
     }
@@ -195,6 +217,7 @@ export default function Settings() {
             workEndMinute: endMinute,
             workDays,
             timezone,
+            emailReminderOneHour,
           },
         },
         { merge: true }
@@ -204,6 +227,97 @@ export default function Settings() {
       toast.error('Failed to save settings.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleReconnectCalendar = async () => {
+    if (!user || !auth.currentUser) return
+    setSyncingCalendar(true)
+    try {
+      const result = await reauthenticateWithPopup(auth.currentUser, googleProvider)
+      const popupEmail = result.user.email?.toLowerCase()
+      const accountEmail = user.email?.toLowerCase()
+      if (popupEmail && accountEmail && popupEmail !== accountEmail) {
+        toast.error('Use the Google account that matches your login email/password account.')
+        return
+      }
+      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken
+      if (!accessToken) {
+        toast.error('Unable to get Google Calendar access. Please try again.')
+        return
+      }
+
+      await setDoc(
+        doc(db, 'users', user.uid),
+        {
+          googleAccessToken: accessToken,
+          tokenUpdatedAt: new Date(),
+        },
+        { merge: true }
+      )
+      setGoogleCalendarConnected(true)
+      toast.success('Google Calendar connected.')
+    } catch {
+      toast.error('Google Calendar reconnect failed. Please try again.')
+    } finally {
+      setSyncingCalendar(false)
+    }
+  }
+
+  const handleDisconnectCalendar = async () => {
+    if (!user) return
+    setDisconnectingCalendar(true)
+    try {
+      await setDoc(
+        doc(db, 'users', user.uid),
+        {
+          googleAccessToken: deleteField(),
+          tokenUpdatedAt: deleteField(),
+        },
+        { merge: true }
+      )
+      setGoogleCalendarConnected(false)
+      toast.success('Google Calendar disconnected.')
+      setShowDisconnectCalendarConfirm(false)
+    } catch {
+      toast.error('Failed to disconnect Google Calendar.')
+    } finally {
+      setDisconnectingCalendar(false)
+    }
+  }
+
+  const handleChangePassword = async () => {
+    if (!user || !auth.currentUser) return
+    if (!user.email) {
+      toast.error('No email found for this account.')
+      return
+    }
+    if (!currentPassword || !newPassword || !confirmNewPassword) {
+      toast.error('Enter current password and new password fields.')
+      return
+    }
+    if (newPassword.length < 6) {
+      toast.error('New password must be at least 6 characters.')
+      return
+    }
+    if (newPassword !== confirmNewPassword) {
+      toast.error('New passwords do not match.')
+      return
+    }
+
+    setChangingPassword(true)
+    try {
+      const credential = EmailAuthProvider.credential(user.email, currentPassword)
+      await reauthenticateWithCredential(auth.currentUser, credential)
+      await updatePassword(auth.currentUser, newPassword)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmNewPassword('')
+      toast.success('Password updated.')
+    } catch {
+      toast.error('Unable to change password. Check your current password and try again.')
+    } finally {
+      setChangingPassword(false)
     }
   }
 
@@ -334,9 +448,95 @@ export default function Settings() {
               title="Account Settings"
               description="Manage your account and data."
             >
-            <div className="border rounded-xl p-4 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium">Delete account</p>
+            <div className="border rounded-xl p-4 flex flex-col gap-4">
+              <div className="border rounded-lg p-3 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium">Google Calendar connection</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Status: {googleCalendarConnected ? 'Connected' : 'Not connected'}
+                  </p>
+                </div>
+                {googleCalendarConnected ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setShowDisconnectCalendarConfirm(true)}
+                  >
+                    Disconnect
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleReconnectCalendar}
+                    disabled={syncingCalendar}
+                    className="gap-1.5"
+                  >
+                    <RefreshCcw className="size-3.5" />
+                    {syncingCalendar ? 'Reconnecting...' : 'Reconnect'}
+                  </Button>
+                )}
+              </div>
+
+              <div className="border rounded-lg p-3 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium">Email reminders</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Send an email reminder 1 hour before a scheduled meeting.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEmailReminderOneHour((v) => !v)}
+                  className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
+                    emailReminderOneHour ? 'bg-primary' : 'bg-muted'
+                  }`}
+                  aria-label="Toggle one-hour email reminders"
+                >
+                  <span
+                    className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                      emailReminderOneHour ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="border rounded-lg p-3 flex flex-col gap-2.5">
+                <p className="text-sm font-medium">Change password</p>
+                <p className="text-xs text-muted-foreground">
+                  Requires your current password. This is only for accounts with email/password enabled.
+                </p>
+                <div className="grid grid-cols-1 gap-2">
+                  <Input
+                    type="password"
+                    placeholder="Current password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                  />
+                  <Input
+                    type="password"
+                    placeholder="New password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                  <Input
+                    type="password"
+                    placeholder="Confirm new password"
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Button variant="outline" size="sm" onClick={handleChangePassword} disabled={changingPassword}>
+                    {changingPassword ? 'Updating...' : 'Update password'}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="border rounded-lg p-3 flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium">Delete account</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Permanently removes your account and all associated data. This cannot be undone.
                 </p>
@@ -349,6 +549,7 @@ export default function Settings() {
               >
                 Delete
               </Button>
+              </div>
             </div>
             </Section>
           </div>
@@ -368,6 +569,25 @@ export default function Settings() {
             <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>Cancel</Button>
             <Button variant="destructive" onClick={handleDeleteAccount} disabled={deleting}>
               {deleting ? 'Deleting...' : 'Delete my account'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showDisconnectCalendarConfirm} onOpenChange={setShowDisconnectCalendarConfirm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Disconnect Google Calendar?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Chronos needs Google Calendar to schedule accurately. If you disconnect, your availability is ignored by the scheduling algorithm and your meetings may be excluded from matching.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDisconnectCalendarConfirm(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDisconnectCalendar} disabled={disconnectingCalendar}>
+              {disconnectingCalendar ? 'Disconnecting...' : 'Disconnect'}
             </Button>
           </DialogFooter>
         </DialogContent>

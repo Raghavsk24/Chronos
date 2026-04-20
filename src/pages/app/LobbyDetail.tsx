@@ -444,7 +444,7 @@ export default function LobbyDetail() {
                     tabIndex={0}
                     className="w-full text-left border rounded-xl px-3 pt-3 pb-2 hover:bg-muted/30 transition-colors cursor-pointer"
                   >
-                    <div className="flex items-start justify-between gap-3 pb-[10px]">
+                    <div className="flex items-start justify-between gap-3 pb-[15px]">
                       <div className="min-w-0">
                         <p className="font-semibold text-sm leading-snug truncate">{m.name}</p>
                         {m.description && (

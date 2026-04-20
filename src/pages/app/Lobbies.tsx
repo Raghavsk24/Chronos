@@ -248,7 +248,7 @@ export default function Lobbies() {
                 <div
                   key={lobby.id}
                   onClick={() => navigate(`/app/lobbies/${lobby.id}`)}
-                  className="border rounded-xl p-5 cursor-pointer hover:bg-muted/30 transition-colors"
+                  className="border rounded-xl px-5 pt-5 pb-0 cursor-pointer hover:bg-muted/30 transition-colors"
                 >
                   {/* Name + description */}
                   <h2 className="text-xl font-bold tracking-tight leading-snug">{lobby.name}</h2>
@@ -272,7 +272,7 @@ export default function Lobbies() {
                   </div>
 
                   {/* Footer */}
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t">
+                  <div className="flex items-center justify-between mt-5 pt-[7px] pb-[7px] border-t">
                     {/* Host info + meta */}
                     <div className="flex items-center gap-2">
                       <Avatar src={hostMember?.photoURL} name={lobby.hostName} className="w-5 h-5 text-[10px]" />

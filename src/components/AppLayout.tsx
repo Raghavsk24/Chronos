@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { signOut } from 'firebase/auth'
-import { LogOut } from 'lucide-react'
+import { ChevronDown, LogOut } from 'lucide-react'
 import { auth } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import UserProfilePanel from '@/components/UserProfilePanel'
@@ -31,21 +31,22 @@ export default function AppLayout() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <header className="border-b shrink-0">
+      <header className="border-b-[1.5px] shrink-0">
         <div className="h-14 flex items-center justify-between px-4 md:px-6">
           <span className="text-lg font-bold tracking-tight">Chronos</span>
           <button
             onClick={() => setProfileOpen(true)}
-            className="group flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full hover:bg-accent transition-colors"
+            className="group flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border border-slate-300 bg-slate-100 hover:bg-slate-200/70 transition-colors"
           >
             <Avatar src={user?.photoURL} name={user?.displayName} className="w-7 h-7 text-xs" />
-            <span className="text-sm font-medium leading-none group-hover:underline truncate max-w-[140px] md:max-w-[180px]">
+            <span className="text-[15.5px] font-medium leading-[1.15] text-left group-hover:underline whitespace-normal break-words max-w-[160px] md:max-w-[220px]">
               {user?.displayName}
             </span>
+            <ChevronDown className="size-4 text-muted-foreground" aria-hidden="true" />
           </button>
         </div>
 
-        <nav className="md:hidden border-t px-3 py-2 flex items-center gap-1 overflow-x-auto">
+        <nav className="md:hidden border-t-[1.5px] px-3 py-2 flex items-center gap-1 overflow-x-auto">
           {navItems.map(({ to, label }) => (
             <NavLink key={to} to={to} className={navClass}>
               {label}
@@ -63,7 +64,7 @@ export default function AppLayout() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <aside className="hidden md:flex w-48 border-r flex-col p-4 gap-1 shrink-0">
+        <aside className="hidden md:flex w-48 border-r-[1.5px] flex-col p-4 gap-1 shrink-0">
           {navItems.map(({ to, label }) => (
             <NavLink key={to} to={to} className={navClass}>
               {label}
@@ -71,7 +72,7 @@ export default function AppLayout() {
           ))}
 
           <div className="mt-auto flex flex-col gap-1">
-            <div className="border-t my-1" />
+            <div className="border-t-[1.5px] my-1" />
             <NavLink to="/app/settings" className={navClass}>
               Settings
             </NavLink>

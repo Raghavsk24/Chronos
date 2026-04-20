@@ -172,11 +172,12 @@ export default function MeetingDetail() {
     setScheduleError('')
     try {
       const result = await scheduleMeeting({ meetingId: meeting.id })
-      const data = result.data as { slots?: Slot[]; error?: string }
+      const data = result.data as { slots?: Slot[]; error?: string; warning?: string }
       if (data.error) {
         setScheduleError(data.error)
       } else {
         setSlots(data.slots ?? [])
+        if (data.warning) toast.info(data.warning)
         if (!data.slots?.length) setScheduleError('No available slots found in the next 4 weeks.')
       }
     } catch (err: unknown) {

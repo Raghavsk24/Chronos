@@ -93,6 +93,15 @@ export default function Dashboard() {
     [scheduledMeetings]
   )
 
+  const meetingCountsByDay = useMemo(() => {
+    const counts = new Map<string, number>()
+    scheduledMeetings.forEach((m) => {
+      const key = format(parseUtcDate(m.scheduledSlot!.start), 'yyyy-MM-dd')
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    })
+    return counts
+  }, [scheduledMeetings])
+
   const dayMeetings = useMemo(() => {
     if (!selectedDay) return []
     return scheduledMeetings.filter((m) =>
@@ -104,19 +113,22 @@ export default function Dashboard() {
 
   const DayButtonWithDot = useCallback(
     ({ day, modifiers, className, ...rest }: DayButtonProps) => {
-      const hasMeeting = meetingDates.some((d) => isSameDay(d, day.date))
+      const dayKey = format(day.date, 'yyyy-MM-dd')
+      const dotCount = Math.min(meetingCountsByDay.get(dayKey) ?? 0, 3)
       return (
         <button {...rest} className={cn(className, 'relative flex flex-col items-center justify-center gap-0.5')}>
           <span>{format(day.date, 'd')}</span>
-          {hasMeeting ? (
-            <span className="w-1 h-1 rounded-full bg-primary shrink-0" />
-          ) : (
-            <span className="w-1 h-1 shrink-0" />
-          )}
+          {dotCount > 0 ? (
+            <span className="flex items-center gap-0.5 h-1 shrink-0">
+              {Array.from({ length: dotCount }).map((_, i) => (
+                <span key={i} className="w-1 h-1 rounded-full bg-primary" />
+              ))}
+            </span>
+          ) : <span className="w-1 h-1 shrink-0" />}
         </button>
       )
     },
-    [meetingDates]
+    [meetingCountsByDay]
   )
 
   const displayMeetings = sortedMeetings(meetings)
