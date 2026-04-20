@@ -195,30 +195,3 @@ firebase functions:secrets:set RESEND_API_KEY
 firebase functions:secrets:set REMINDER_FROM_EMAIL
 ```
 
----
-
-## Email Reminders
-
-Chronos includes a scheduled Cloud Function (`send_meeting_email_reminders`) that runs every 15 minutes and sends:
-
-- A 24-hour reminder to participants who have enabled `emailReminderTwentyFourHours` in their settings
-- A 1-hour reminder to participants who have enabled `emailReminderOneHour` in their settings
-
-Booking confirmation, reschedule notices, and cancellation emails are sent immediately at the time of the action via Resend. If `RESEND_API_KEY` or `REMINDER_FROM_EMAIL` are missing, all email sending is skipped silently.
-
----
-
-## Backend Tests
-
-```bash
-cd functions
-python -m pytest -v
-```
-
-The suite includes integration tests for booking behaviour and mocked Google Calendar responses.
-
----
-
-## Google Calendar Setup
-
-Each user must connect their Google Calendar through the app to be included in scheduling. The OAuth flow requests `calendar.readonly` and `calendar.events` scopes with `prompt: consent` to ensure a refresh token is always returned and stored. Users can reconnect at any time from the Settings page.
