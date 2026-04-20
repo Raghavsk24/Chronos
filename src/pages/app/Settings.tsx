@@ -7,6 +7,7 @@ import { db, auth } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,73 @@ const TIMEZONES = Intl.supportedValuesOf('timeZone')
 
 function toTimeString(hour: number, minute: number): string {
   return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+}
+
+function parseTime(value: string): { hour: string; minute: string; period: string } {
+  const [h, m] = value.split(':').map(Number)
+  const period = h >= 12 ? 'PM' : 'AM'
+  const hour12 = h % 12 || 12
+  return {
+    hour: String(hour12).padStart(2, '0'),
+    minute: String(m).padStart(2, '0'),
+    period,
+  }
+}
+
+function buildTime(hour: string, minute: string, period: string): string {
+  let h = parseInt(hour)
+  if (period === 'PM' && h !== 12) h += 12
+  if (period === 'AM' && h === 12) h = 0
+  return `${String(h).padStart(2, '0')}:${minute}`
+}
+
+const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
+const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'))
+
+function TimePicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (v: string) => void
+}) {
+  const { hour, minute, period } = parseTime(value)
+  const update = (h: string, m: string, p: string) => onChange(buildTime(h, m, p))
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select value={hour} onValueChange={(v) => { if (v) update(v, minute, period) }}>
+        <SelectTrigger className="w-16">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {HOURS.map((h) => (
+            <SelectItem key={h} value={h}>{h}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <span className="text-sm text-muted-foreground font-medium">:</span>
+      <Select value={minute} onValueChange={(v) => { if (v) update(hour, v, period) }}>
+        <SelectTrigger className="w-16">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {MINUTES.map((m) => (
+            <SelectItem key={m} value={m}>{m}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={period} onValueChange={(v) => { if (v) update(hour, minute, v) }}>
+        <SelectTrigger className="w-16">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="AM">AM</SelectItem>
+          <SelectItem value="PM">PM</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  )
 }
 
 function Section({ title, description, children }: {
@@ -162,17 +230,18 @@ export default function Settings() {
 
   return (
     <div className="h-[calc(100vh-3.5rem)] overflow-y-auto">
-      <div className="max-w-lg px-8 py-8">
+      <div className="max-w-5xl mx-auto px-8 py-8">
         <h1 className="text-2xl font-bold tracking-tight mb-1">Settings</h1>
         <p className="text-sm text-muted-foreground mb-8">Manage your availability and account.</p>
 
-        <div className="flex flex-col gap-8">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1fr_1px_1fr] lg:gap-0">
 
           {/* Availability */}
-          <Section
-            title="Availability"
-            description="Controls when meetings can be scheduled for you."
-          >
+          <div className="lg:pr-10">
+            <Section
+              title="Availability"
+              description="Controls when meetings can be scheduled for you."
+            >
             <div className="border rounded-xl divide-y">
 
               {/* Work days */}
@@ -201,20 +270,10 @@ export default function Settings() {
               <div className="p-4 flex flex-col gap-2">
                 <Label>Work hours</Label>
                 <p className="text-xs text-muted-foreground">Meetings will only be scheduled within this window.</p>
-                <div className="flex items-center gap-3 mt-1">
-                  <input
-                    type="time"
-                    value={workStart}
-                    onChange={(e) => setWorkStart(e.target.value)}
-                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-                  />
+                <div className="flex flex-wrap items-center gap-3 mt-1">
+                  <TimePicker value={workStart} onChange={setWorkStart} />
                   <span className="text-sm text-muted-foreground">to</span>
-                  <input
-                    type="time"
-                    value={workEnd}
-                    onChange={(e) => setWorkEnd(e.target.value)}
-                    className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm"
-                  />
+                  <TimePicker value={workEnd} onChange={setWorkEnd} />
                 </div>
               </div>
 
@@ -222,20 +281,25 @@ export default function Settings() {
               <div className="p-4 flex flex-col gap-2">
                 <Label htmlFor="buffer">Buffer time</Label>
                 <p className="text-xs text-muted-foreground">Breathing room reserved before and after each calendar event.</p>
-                <select
-                  id="buffer"
-                  value={bufferMinutes}
-                  onChange={(e) => setBufferMinutes(Number(e.target.value))}
-                  className="h-8 w-40 rounded-lg border border-input bg-background px-2.5 text-sm mt-1"
-                >
-                  <option value={0}>None</option>
-                  <option value={5}>5 minutes</option>
-                  <option value={10}>10 minutes</option>
-                  <option value={15}>15 minutes</option>
-                  <option value={30}>30 minutes</option>
-                  <option value={45}>45 minutes</option>
-                  <option value={60}>1 hour</option>
-                </select>
+                <div className="mt-1">
+                  <Select
+                    value={String(bufferMinutes)}
+                    onValueChange={(v) => { if (v) setBufferMinutes(Number(v)) }}
+                  >
+                    <SelectTrigger id="buffer" className="h-8 w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">None</SelectItem>
+                      <SelectItem value="5">5 minutes</SelectItem>
+                      <SelectItem value="10">10 minutes</SelectItem>
+                      <SelectItem value="15">15 minutes</SelectItem>
+                      <SelectItem value="30">30 minutes</SelectItem>
+                      <SelectItem value="45">45 minutes</SelectItem>
+                      <SelectItem value="60">1 hour</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {/* Timezone */}
@@ -258,15 +322,18 @@ export default function Settings() {
             <Button onClick={handleSave} disabled={saving} className="w-fit">
               {saving ? 'Saving...' : 'Save settings'}
             </Button>
-          </Section>
+            </Section>
+          </div>
 
-          <div className="border-t" />
+          {/* Divider */}
+          <div className="hidden lg:block bg-border" />
 
-          {/* Account */}
-          <Section
-            title="Account"
-            description="Manage your account and data."
-          >
+          {/* Account Settings */}
+          <div className="lg:pl-10">
+            <Section
+              title="Account Settings"
+              description="Manage your account and data."
+            >
             <div className="border rounded-xl p-4 flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium">Delete account</p>
@@ -283,7 +350,8 @@ export default function Settings() {
                 Delete
               </Button>
             </div>
-          </Section>
+            </Section>
+          </div>
 
         </div>
       </div>
