@@ -1,5 +1,8 @@
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { signOut } from 'firebase/auth'
+import { LogOut } from 'lucide-react'
+import { auth } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import UserProfilePanel from '@/components/UserProfilePanel'
 import Avatar from '@/components/Avatar'
@@ -18,7 +21,13 @@ const navClass = ({ isActive }: { isActive: boolean }) =>
 
 export default function AppLayout() {
   const user = useAuthStore((state) => state.user)
+  const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
+
+  const handleSignOut = async () => {
+    await signOut(auth)
+    navigate('/login')
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -40,9 +49,20 @@ export default function AppLayout() {
               {label}
             </NavLink>
           ))}
-          <NavLink to="/app/settings" className={navClass} style={{ marginTop: 'auto' }}>
-            Settings
-          </NavLink>
+
+          <div className="mt-auto flex flex-col gap-1">
+            <div className="border-t my-1" />
+            <NavLink to="/app/settings" className={navClass}>
+              Settings
+            </NavLink>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground text-left"
+            >
+              <LogOut className="size-3.5" />
+              Sign out
+            </button>
+          </div>
         </aside>
         <main className="flex-1 overflow-auto">
           <Outlet />

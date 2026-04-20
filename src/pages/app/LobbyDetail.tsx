@@ -265,7 +265,7 @@ export default function LobbyDetail() {
             Delete Lobby
           </Button>
         ) : (
-          <Button variant="outline" size="sm" onClick={() => setShowLeave(true)} className="shrink-0">
+          <Button variant="destructive" size="sm" onClick={() => setShowLeave(true)} className="shrink-0">
             <LogOut className="size-3.5 mr-1.5" />
             Leave Lobby
           </Button>
@@ -488,7 +488,7 @@ export default function LobbyDetail() {
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowLeave(false)} disabled={acting}>Cancel</Button>
-            <Button variant="outline" onClick={handleLeave} disabled={acting}>
+            <Button variant="destructive" onClick={handleLeave} disabled={acting}>
               {acting ? 'Leaving...' : 'Leave lobby'}
             </Button>
           </DialogFooter>

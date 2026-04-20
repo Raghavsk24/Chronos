@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
 import { onAuthStateChanged } from 'firebase/auth'
-import { doc, updateDoc } from 'firebase/firestore'
+import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { auth, db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [onboardingDone, setOnboardingDone] = useState(false)
   const setUser = useAuthStore((state) => state.setUser)
+  const setOnboardingComplete = useAuthStore((state) => state.setOnboardingComplete)
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -17,20 +19,28 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
         const refreshed = auth.currentUser ?? user
         setUser(refreshed)
         setIsAuthenticated(true)
+
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
         updateDoc(doc(db, 'users', refreshed.uid), {
           'settings.timezone': browserTz,
           photoURL: refreshed.photoURL,
         }).catch(() => {})
+
+        const snap = await getDoc(doc(db, 'users', refreshed.uid))
+        const complete = snap.exists() && snap.data().onboardingComplete === true
+        setOnboardingDone(complete)
+        setOnboardingComplete(complete)
       } else {
         setUser(null)
         setIsAuthenticated(false)
+        setOnboardingDone(false)
+        setOnboardingComplete(false)
       }
       setLoading(false)
     })
 
     return unsubscribe
-  }, [setUser])
+  }, [setUser, setOnboardingComplete])
 
   if (loading) {
     return (
@@ -40,9 +50,7 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     )
   }
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
-  }
-
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  if (!onboardingDone) return <Navigate to="/onboarding" replace />
   return <>{children}</>
 }

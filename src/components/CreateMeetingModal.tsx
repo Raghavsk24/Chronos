@@ -2,12 +2,15 @@ import { useState, useEffect } from 'react'
 import { collection, addDoc, getDocs, query, where, doc, getDoc } from 'firebase/firestore'
 import { toast } from 'sonner'
 import { X } from 'lucide-react'
+import { format } from 'date-fns'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { Calendar } from '@/components/ui/calendar'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Dialog,
   DialogContent,
@@ -32,18 +35,16 @@ interface Props {
 
 type DayPart = 'morning' | 'midday' | 'afternoon'
 
-function parseDateInput(raw: string): string | null {
-  const d = new Date(raw)
-  if (isNaN(d.getTime())) return null
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
 function formatDisplayDate(iso: string): string {
   const [y, m, d] = iso.split('-')
-  return `${parseInt(m)}/${parseInt(d)}/${y}`
+  return format(new Date(Number(y), Number(m) - 1, Number(d)), 'MMM d, yyyy')
+}
+
+function toIsoDate(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
 }
 
 export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props) {
@@ -66,7 +67,8 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
   const [dayPart, setDayPart] = useState<DayPart | null>(null)
   const [targetingDate, setTargetingDate] = useState(false)
   const [targetDates, setTargetDates] = useState<string[]>([])
-  const [dateInput, setDateInput] = useState('')
+  const [selectedTargetDate, setSelectedTargetDate] = useState<Date>(() => new Date())
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
   const [extraBuffer, setExtraBuffer] = useState(false)
 
   useEffect(() => {
@@ -88,14 +90,13 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
   const reset = () => {
     setSelectedLobbyId(defaultLobbyId ?? ''); setMeetingName(''); setMeetingDescription('')
     setDuration('60'); setMeetingLink(''); setDayPart(null)
-    setTargetingDate(false); setTargetDates([]); setDateInput(''); setExtraBuffer(false)
+    setTargetingDate(false); setTargetDates([]); setSelectedTargetDate(new Date()); setCalendarMonth(new Date()); setExtraBuffer(false)
   }
 
   const addTargetDate = () => {
-    const iso = parseDateInput(dateInput.trim())
+    const iso = toIsoDate(selectedTargetDate)
     if (!iso) { toast.error('Invalid date. Try formats like 1/20/2026.'); return }
     if (!targetDates.includes(iso)) setTargetDates((prev) => [...prev, iso])
-    setDateInput('')
   }
 
   const handleCreate = async () => {
@@ -269,21 +270,90 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
               </div>
               {targetingDate && (
                 <div className="flex flex-col gap-2">
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="e.g. 1/20/2026"
-                      value={dateInput}
-                      onChange={(e) => setDateInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && addTargetDate()}
+                  <div className="rounded-xl border bg-popover p-2.5 shadow-md">
+                    <div className="grid grid-cols-7 items-center gap-1 mb-0.5">
+                      <button
+                        type="button"
+                        aria-label="Previous month"
+                        onClick={() => setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+                        className="col-start-1 justify-self-center h-7 w-7 inline-flex items-center justify-center rounded-md border border-input bg-transparent opacity-50 hover:opacity-100 hover:bg-accent hover:text-accent-foreground transition-colors"
+                      >
+                        <span className="text-lg leading-none">‹</span>
+                      </button>
+                      <div className="col-start-2 col-end-7 flex items-center justify-center gap-1">
+                        <Select
+                          value={String(calendarMonth.getMonth())}
+                          onValueChange={(value) => setCalendarMonth((prev) => new Date(prev.getFullYear(), Number(value), 1))}
+                        >
+                          <SelectTrigger className="h-8 w-[114px]">
+                            <span className="truncate">{format(calendarMonth, 'MMMM')}</span>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Array.from({ length: 12 }, (_, i) => format(new Date(2020, i, 1), 'MMMM')).map((label, i) => (
+                              <SelectItem key={label} value={String(i)}>{label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={String(calendarMonth.getFullYear())}
+                          onValueChange={(value) => setCalendarMonth((prev) => new Date(Number(value), prev.getMonth(), 1))}
+                        >
+                          <SelectTrigger className="h-8 w-[88px]">
+                            <SelectValue placeholder={String(calendarMonth.getFullYear())} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Array.from({ length: new Date().getFullYear() - 1920 + 1 }, (_, i) => String(1920 + i)).map((year) => (
+                              <SelectItem key={year} value={year}>{year}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Next month"
+                        onClick={() => setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+                        className="col-start-7 justify-self-center h-7 w-7 inline-flex items-center justify-center rounded-md border border-input bg-transparent opacity-50 hover:opacity-100 hover:bg-accent hover:text-accent-foreground transition-colors"
+                      >
+                        <span className="text-lg leading-none">›</span>
+                      </button>
+                    </div>
+                    <Calendar
+                      mode="single"
+                      selected={selectedTargetDate}
+                      onSelect={(date) => {
+                        if (date) {
+                          setSelectedTargetDate(date)
+                          setCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1))
+                        }
+                      }}
+                      month={calendarMonth}
+                      onMonthChange={setCalendarMonth}
+                      className="w-full p-0"
+                      classNames={{
+                        month_caption: 'hidden',
+                        caption_label: 'hidden',
+                        nav: 'hidden',
+                        months: 'w-full',
+                        month: 'w-full',
+                        weekdays: 'grid grid-cols-7 w-full',
+                        weekday: 'text-muted-foreground font-normal text-xs text-center py-0.5',
+                        weeks: 'flex flex-col gap-1 w-full',
+                        week: 'grid grid-cols-7 w-full',
+                        day: 'flex items-center justify-center',
+                        day_button: 'w-full h-11 p-0 font-normal text-sm inline-flex items-center justify-center rounded-lg',
+                        selected: 'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground rounded-lg',
+                        today: 'bg-accent text-accent-foreground rounded-lg',
+                        outside: 'text-muted-foreground opacity-40',
+                      }}
                     />
-                    <Button variant="outline" onClick={addTargetDate} disabled={!dateInput.trim()}>
+                    <Button variant="outline" onClick={addTargetDate} className="mt-2 w-full">
                       Add
                     </Button>
                   </div>
                   {targetDates.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {targetDates.map((iso) => (
-                        <Badge key={iso} variant="secondary" className="gap-1">
+                        <Badge key={iso} variant="secondary" className="gap-1 text-xs">
                           {formatDisplayDate(iso)}
                           <button
                             type="button"
