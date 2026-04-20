@@ -39,7 +39,7 @@ type FirestoreTimestampLike =
   | undefined
 
 function formatDate(createdAt: FirestoreTimestampLike): string {
-  if (!createdAt) return '—'
+  if (!createdAt) return '-'
 
   let d: Date | null = null
   if (createdAt instanceof Date) d = createdAt
@@ -50,7 +50,7 @@ function formatDate(createdAt: FirestoreTimestampLike): string {
     d = new Date((createdAt as { seconds: number }).seconds * 1000)
   }
 
-  if (!d || Number.isNaN(d.getTime())) return '—'
+  if (!d || Number.isNaN(d.getTime())) return '-'
 
   return d.toLocaleDateString('en-US', {
     month: 'long',
@@ -516,7 +516,7 @@ export default function MeetingDetail() {
             <p className="text-sm text-muted-foreground">
               {slotDate(meeting.scheduledSlot.start, userTimezone)}{' '}
               {slotTime(meeting.scheduledSlot.start, userTimezone)}
-              {' – '}
+              {' - '}
               {slotTime(meeting.scheduledSlot.end, userTimezone)}{' '}
               ({tzAbbr(meeting.scheduledSlot.start, userTimezone)})
             </p>
@@ -528,7 +528,7 @@ export default function MeetingDetail() {
               <p className="text-sm text-muted-foreground">
                 {slotDate(meeting.scheduledSlot.start, userTimezone)}{' '}
                 {slotTime(meeting.scheduledSlot.start, userTimezone)}
-                {' – '}
+                {' - '}
                 {slotTime(meeting.scheduledSlot.end, userTimezone)}{' '}
                 ({tzAbbr(meeting.scheduledSlot.start, userTimezone)})
               </p>
@@ -608,7 +608,7 @@ export default function MeetingDetail() {
                     >
                       <p className="font-medium text-sm">{slotDate(slot.start, userTimezone)}</p>
                       <p className="text-sm text-muted-foreground">
-                        {slotTime(slot.start, userTimezone)} – {slotTime(slot.end, userTimezone)}{' '}
+                        {slotTime(slot.start, userTimezone)} - {slotTime(slot.end, userTimezone)}{' '}
                         ({tzAbbr(slot.start, userTimezone)})
                       </p>
                     </button>
@@ -621,7 +621,7 @@ export default function MeetingDetail() {
                     <Button className="mt-2 w-full" onClick={handleBook} disabled={booking}>
                       {booking
                         ? 'Booking...'
-                        : `Confirm – ${slotDate(selectedSlot.start, userTimezone)} ${slotTime(selectedSlot.start, userTimezone)}`}
+                        : `Confirm - ${slotDate(selectedSlot.start, userTimezone)} ${slotTime(selectedSlot.start, userTimezone)}`}
                     </Button>
                   </>
                 )}

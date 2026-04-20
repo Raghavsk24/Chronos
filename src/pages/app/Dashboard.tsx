@@ -440,7 +440,7 @@ export default function Dashboard() {
                             {m.scheduledSlot && (
                               <p className="text-xs text-muted-foreground mt-0.5">
                                 {slotTime(m.scheduledSlot.start, userTimezone)}
-                                {' — '}
+                                {' - '}
                                 {slotTime(m.scheduledSlot.end, userTimezone)}
                               </p>
                             )}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Navigate } from 'react-router-dom'
-import { onAuthStateChanged } from 'firebase/auth'
+import { onAuthStateChanged, signOut } from 'firebase/auth'
 import { doc, getDoc, updateDoc } from 'firebase/firestore'
 import { auth, db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
@@ -17,6 +17,18 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
       if (user) {
         await user.reload()
         const refreshed = auth.currentUser ?? user
+
+        const isPasswordProvider = refreshed.providerData.some((provider) => provider.providerId === 'password')
+        if (isPasswordProvider && !refreshed.emailVerified) {
+          await signOut(auth)
+          setUser(null)
+          setIsAuthenticated(false)
+          setOnboardingDone(false)
+          setOnboardingComplete(false)
+          setLoading(false)
+          return
+        }
+
         setUser(refreshed)
         setIsAuthenticated(true)
 

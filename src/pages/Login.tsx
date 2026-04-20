@@ -4,6 +4,8 @@ import {
   GoogleAuthProvider,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   fetchSignInMethodsForEmail,
   updateProfile,
   EmailAuthProvider,
@@ -33,6 +35,18 @@ type PasswordLinkIntent = {
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 const NAME_REGEX = /^[A-Za-z][A-Za-z' -]*$/
 
+type PasswordStrength = {
+  score: number
+  label: 'Very weak' | 'Weak' | 'Fair' | 'Good' | 'Strong'
+  checks: {
+    length: boolean
+    upper: boolean
+    lower: boolean
+    number: boolean
+    symbol: boolean
+  }
+}
+
 function isValidEmail(email: string): boolean {
   return EMAIL_REGEX.test(email)
 }
@@ -40,6 +54,42 @@ function isValidEmail(email: string): boolean {
 function isValidName(name: string): boolean {
   const trimmed = name.trim()
   return trimmed.length >= 2 && trimmed.length <= 40 && NAME_REGEX.test(trimmed)
+}
+
+function isPasswordProviderUser(user: User): boolean {
+  return user.providerData.some((provider) => provider.providerId === 'password')
+}
+
+function getPasswordStrength(value: string): PasswordStrength {
+  const checks = {
+    length: value.length >= 8,
+    upper: /[A-Z]/.test(value),
+    lower: /[a-z]/.test(value),
+    number: /\d/.test(value),
+    symbol: /[^A-Za-z0-9]/.test(value),
+  }
+
+  const score = Object.values(checks).filter(Boolean).length
+  const label: PasswordStrength['label'] =
+    score <= 1 ? 'Very weak'
+      : score === 2 ? 'Weak'
+        : score === 3 ? 'Fair'
+          : score === 4 ? 'Good'
+            : 'Strong'
+
+  return { score, label, checks }
+}
+
+function strengthColor(score: number): string {
+  if (score <= 1) return 'bg-red-500'
+  if (score === 2) return 'bg-orange-500'
+  if (score === 3) return 'bg-yellow-500'
+  if (score === 4) return 'bg-blue-500'
+  return 'bg-green-500'
+}
+
+function getAuthActionUrl(): string {
+  return `${window.location.origin}/auth/action`
 }
 
 export default function Login() {
@@ -52,6 +102,9 @@ export default function Login() {
   const [lastName, setLastName] = useState('')
   const [linkIntent, setLinkIntent] = useState<PasswordLinkIntent | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [sendingReset, setSendingReset] = useState(false)
+
+  const passwordStrength = getPasswordStrength(password)
 
   const switchMode = (nextMode: AuthMode) => {
     setMode(nextMode)
@@ -62,6 +115,47 @@ export default function Login() {
       setPassword('')
       setConfirmPassword('')
       setLinkIntent(null)
+    }
+  }
+
+  const enforceVerifiedEmail = async (user: User): Promise<boolean> => {
+    if (!isPasswordProviderUser(user) || user.emailVerified) return true
+    try {
+      await sendEmailVerification(user, { url: getAuthActionUrl(), handleCodeInApp: false })
+    } catch (error) {
+      if (error instanceof FirebaseError) {
+        console.error('sendEmailVerification failed', { code: error.code, message: error.message })
+      }
+    }
+
+    await signOut(auth)
+    toast.error("Verify your email before signing in. We sent a verification link to your inbox. Check spam if email is not in your primary inbox.")
+    return false
+  }
+
+  const handleForgotPassword = async () => {
+    const trimmedEmail = email.trim()
+    if (!trimmedEmail) {
+      toast.error('Enter your email first, then click Forgot password.')
+      return
+    }
+    if (!isValidEmail(trimmedEmail)) {
+      toast.error('Invalid email address. Use a format like name@example.com.')
+      return
+    }
+
+    setSendingReset(true)
+    try {
+      await sendPasswordResetEmail(auth, trimmedEmail)
+      toast.success('Password reset email sent. Check your inbox and spam if email is not in your primary inbox.')
+    } catch (error) {
+      if (error instanceof FirebaseError && error.code === 'auth/user-not-found') {
+        toast.error('No account exists for this email address.')
+      } else {
+        toast.error('Unable to send password reset email. Please try again.')
+      }
+    } finally {
+      setSendingReset(false)
     }
   }
 
@@ -162,6 +256,9 @@ export default function Login() {
         displayName: displayNameFromForm,
       })
 
+      const verifiedOk = await enforceVerifiedEmail(user)
+      if (!verifiedOk) return
+
       setLinkIntent(null)
 
       if (linkedPassword) {
@@ -241,9 +338,17 @@ export default function Login() {
           lastName: trimmedLastName,
           displayName,
         })
-        toast.success('Account created! Complete onboarding next.')
+        await sendEmailVerification(result.user, { url: getAuthActionUrl(), handleCodeInApp: false })
+        await signOut(auth)
+        toast.success('Account created. Verify your email to continue then sign in. Check spam if email is not in your primary inbox.')
+        setMode('signin')
+        setPassword('')
+        setConfirmPassword('')
+        return
       } else {
         const result = await signInWithEmailAndPassword(auth, trimmedEmail, password)
+        const verifiedOk = await enforceVerifiedEmail(result.user)
+        if (!verifiedOk) return
         await ensureUserDoc(result.user)
         toast.success('Signed in successfully!')
       }
@@ -419,6 +524,34 @@ export default function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            {mode === 'signin' && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={sendingReset || submitting}
+                  className="text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline disabled:opacity-60"
+                >
+                  {sendingReset ? 'Sending reset...' : 'Forgot password?'}
+                </button>
+              </div>
+            )}
+            {mode === 'signup' && password.length > 0 && (
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  {Array.from({ length: 5 }, (_, index) => (
+                    <span
+                      key={index}
+                      className={`h-1.5 flex-1 rounded-full ${index < passwordStrength.score ? strengthColor(passwordStrength.score) : 'bg-muted'}`}
+                    />
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">Password strength: {passwordStrength.label}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Use at least 8 characters with uppercase, lowercase, numbers and symbols for strongest security.
+                </p>
+              </div>
+            )}
           </div>
           {mode === 'signup' && (
             <div className="flex flex-col gap-1.5">

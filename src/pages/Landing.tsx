@@ -19,7 +19,7 @@ export default function Landing() {
 
       <main className="flex-1 flex flex-col items-center justify-center text-center px-8 gap-6">
         <h2 className="text-5xl font-bold tracking-tight max-w-2xl">
-          Schedule meetings for your group — automatically.
+          Schedule meetings for your group automatically.
         </h2>
         <p className="text-muted-foreground text-lg max-w-xl">
           Chronos connects to your team's Google Calendars and finds the perfect time for everyone. No back-and-forth. No conflicts.

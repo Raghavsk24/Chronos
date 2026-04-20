@@ -166,7 +166,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
         </DialogHeader>
 
         <div className="flex flex-col gap-5 mt-2">
-          {/* Lobby selection — hidden when a default lobby is pre-selected */}
+          {/* Lobby selection hidden when a default lobby is pre-selected */}
           {!defaultLobbyId && (
             <>
               <div className="flex flex-col gap-1.5">

@@ -4,6 +4,7 @@ import { Toaster } from 'sonner'
 
 const Landing = lazy(() => import('@/pages/Landing'))
 const Login = lazy(() => import('@/pages/Login'))
+const AuthAction = lazy(() => import('@/pages/AuthAction'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
 const Join = lazy(() => import('@/pages/Join'))
 const ProtectedRoute = lazy(() => import('@/components/ProtectedRoute'))
@@ -37,6 +38,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Suspense fallback={<PageFallback />}><Landing /></Suspense>} />
         <Route path="/login" element={<Suspense fallback={<PageFallback />}><Login /></Suspense>} />
+        <Route path="/auth/action" element={<Suspense fallback={<PageFallback />}><AuthAction /></Suspense>} />
         <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><Onboarding /></Suspense>} />
         <Route path="/join/:id" element={<Suspense fallback={<PageFallback />}><Join /></Suspense>} />
         <Route

@@ -53,7 +53,7 @@ interface Meeting {
 }
 
 function formatDate(createdAt?: { seconds: number } | null): string {
-  if (!createdAt) return '—'
+  if (!createdAt) return '-'
   return new Date(createdAt.seconds * 1000).toLocaleDateString('en-US', {
     month: 'long', day: 'numeric', year: 'numeric',
   })
@@ -364,7 +364,7 @@ export default function LobbyDetail() {
         {/* Main columns */}
         <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
 
-        {/* LEFT — Meetings */}
+        {/* LEFT Meetings */}
         <section className="rounded-2xl border bg-card px-6 md:px-8 py-6">
           <h2 className="text-lg font-semibold tracking-tight mb-4">Meetings</h2>
 
@@ -488,7 +488,7 @@ export default function LobbyDetail() {
           )}
         </section>
 
-        {/* RIGHT — Participants */}
+        {/* RIGHT Participants */}
         <section className="rounded-2xl border bg-card px-6 py-6">
           <h2 className="text-lg font-semibold tracking-tight mb-4">
             Participants
