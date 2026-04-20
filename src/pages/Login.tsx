@@ -120,8 +120,10 @@ export default function Login() {
 
   const enforceVerifiedEmail = async (user: User): Promise<boolean> => {
     if (!isPasswordProviderUser(user) || user.emailVerified) return true
+    let verificationSent = false
     try {
       await sendEmailVerification(user, { url: getAuthActionUrl(), handleCodeInApp: false })
+      verificationSent = true
     } catch (error) {
       if (error instanceof FirebaseError) {
         console.error('sendEmailVerification failed', { code: error.code, message: error.message })
@@ -129,7 +131,11 @@ export default function Login() {
     }
 
     await signOut(auth)
-    toast.error("Verify your email before signing in. We sent a verification link to your inbox. Check spam if email is not in your primary inbox.")
+    if (verificationSent) {
+      toast.error('Verify your email before signing in. We sent a verification link to your inbox. Check spam if email is not in your primary inbox.')
+    } else {
+      toast.error('Verify your email before signing in. We could not send a new verification link right now. Sign in later to request another link.')
+    }
     return false
   }
 

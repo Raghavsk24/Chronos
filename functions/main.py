@@ -1,15 +1,25 @@
 import json
+import os
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import firebase_admin
 from firebase_admin import firestore as admin_firestore
-from firebase_functions import https_fn
+from firebase_functions import https_fn, scheduler_fn
 
 from scheduling.algorithm import find_meeting_slots
 
 MAX_WEEKS = 4
+REMINDER_TOLERANCE_MINUTES = 20
+
+
+def _parse_iso_to_utc(iso_str: str) -> datetime:
+    """Parse an ISO datetime string and normalize it to UTC-aware datetime."""
+    dt = datetime.fromisoformat(iso_str.replace('Z', '+00:00'))
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 # Must be initialized at module level so the callable framework can verify
 # Firebase ID tokens before our function code runs.
@@ -232,13 +242,244 @@ def _create_calendar_event(
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status == 200
+            return 200 <= resp.status < 300
     except urllib.error.HTTPError as e:
         print(f'Calendar API error {e.code}: {e.read().decode()}')
         return False
     except Exception as e:
         print(f'Calendar event creation failed: {e}')
         return False
+
+
+def _send_resend_email(to_email: str, subject: str, html: str) -> bool:
+    """Send an email via Resend API. Returns False when delivery is unavailable/fails."""
+    api_key = os.environ.get('RESEND_API_KEY', '').strip()
+    from_email = os.environ.get('REMINDER_FROM_EMAIL', '').strip()
+
+    if not api_key or not from_email:
+        return False
+
+    payload = json.dumps({
+        'from': from_email,
+        'to': [to_email],
+        'subject': subject,
+        'html': html,
+    }).encode('utf-8')
+
+    req = urllib.request.Request(
+        'https://api.resend.com/emails',
+        data=payload,
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        },
+        method='POST',
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f'Reminder email send failed for {to_email}: {e}')
+        return False
+
+
+def _build_reminder_email_html(meeting_name: str, slot_start: datetime, slot_end: datetime, reminder_type: str) -> str:
+    reminder_label = 'in 24 hours' if reminder_type == '24h' else 'in 1 hour'
+    start_label = slot_start.strftime('%Y-%m-%d %H:%M UTC')
+    end_label = slot_end.strftime('%H:%M UTC')
+    return (
+        f'<p>This is a reminder that <strong>{meeting_name}</strong> starts {reminder_label}.</p>'
+        f'<p><strong>When:</strong> {start_label} to {end_label}</p>'
+        '<p>Open Chronos to view meeting details and join link.</p>'
+    )
+
+
+@scheduler_fn.on_schedule(schedule='every 15 minutes')
+def send_meeting_email_reminders(event: scheduler_fn.ScheduledEvent) -> None:
+    """Send 24-hour and 1-hour reminder emails based on per-user reminder settings."""
+    client = _get_db()
+    now_utc = datetime.now(timezone.utc)
+    tolerance = timedelta(minutes=REMINDER_TOLERANCE_MINUTES)
+
+    sent_count = 0
+    skipped_missing_provider = 0
+
+    meetings = client.collection('meetings').where('status', '==', 'scheduled').stream()
+
+    for meeting_doc in meetings:
+        meeting = meeting_doc.to_dict() or {}
+        scheduled_slot = meeting.get('scheduledSlot') or {}
+        slot_start_raw = scheduled_slot.get('start')
+        slot_end_raw = scheduled_slot.get('end')
+
+        if not slot_start_raw or not slot_end_raw:
+            continue
+
+        try:
+            slot_start = _parse_iso_to_utc(slot_start_raw)
+            slot_end = _parse_iso_to_utc(slot_end_raw)
+        except ValueError:
+            continue
+
+        if slot_start <= now_utc:
+            continue
+
+        delta = slot_start - now_utc
+        is_due_24h = abs(delta - timedelta(hours=24)) <= tolerance
+        is_due_1h = abs(delta - timedelta(hours=1)) <= tolerance
+        if not is_due_24h and not is_due_1h:
+            continue
+
+        member_uids = meeting.get('memberUids') or []
+        if not member_uids:
+            continue
+
+        reminders_sent = meeting.get('remindersSent') or {}
+        already_sent_24h = set(reminders_sent.get('24h', []))
+        already_sent_1h = set(reminders_sent.get('1h', []))
+
+        just_sent_24h: list[str] = []
+        just_sent_1h: list[str] = []
+
+        for uid in member_uids:
+            user_doc = client.collection('users').document(uid).get()
+            if not user_doc.exists:
+                continue
+
+            user_data = user_doc.to_dict() or {}
+            email = (user_data.get('email') or '').strip()
+            settings = user_data.get('settings') or {}
+
+            if not email:
+                continue
+
+            should_send_24h = bool(settings.get('emailReminderTwentyFourHours')) and is_due_24h and uid not in already_sent_24h
+            should_send_1h = bool(settings.get('emailReminderOneHour')) and is_due_1h and uid not in already_sent_1h
+
+            if should_send_24h:
+                subject = f'Reminder: {meeting.get("name", "Meeting")} starts in 24 hours'
+                html = _build_reminder_email_html(meeting.get('name', 'Meeting'), slot_start, slot_end, '24h')
+                if _send_resend_email(email, subject, html):
+                    just_sent_24h.append(uid)
+                    sent_count += 1
+                else:
+                    skipped_missing_provider += 1
+
+            if should_send_1h:
+                subject = f'Reminder: {meeting.get("name", "Meeting")} starts in 1 hour'
+                html = _build_reminder_email_html(meeting.get('name', 'Meeting'), slot_start, slot_end, '1h')
+                if _send_resend_email(email, subject, html):
+                    just_sent_1h.append(uid)
+                    sent_count += 1
+                else:
+                    skipped_missing_provider += 1
+
+        updates: dict = {}
+        if just_sent_24h:
+            updates['remindersSent.24h'] = admin_firestore.ArrayUnion(just_sent_24h)
+        if just_sent_1h:
+            updates['remindersSent.1h'] = admin_firestore.ArrayUnion(just_sent_1h)
+        if updates:
+            updates['reminderLastProcessedAt'] = admin_firestore.SERVER_TIMESTAMP
+            client.collection('meetings').document(meeting_doc.id).update(updates)
+
+    print(
+        'Reminder job finished',
+        {
+            'jobName': event.job_name,
+            'sentCount': sent_count,
+            'skippedMissingProvider': skipped_missing_provider,
+        },
+    )
+
+
+def _book_meeting_impl(
+    data: dict,
+    auth_uid: str | None,
+    client=None,
+    create_event_fn=_create_calendar_event,
+) -> dict:
+    if auth_uid is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in to book a meeting.',
+        )
+
+    meeting_id: str = (data.get('meetingId') or '').strip()
+    slot_start: str = (data.get('slotStart') or '').strip()
+    slot_end: str = (data.get('slotEnd') or '').strip()
+
+    if not meeting_id or not slot_start or not slot_end:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='meetingId, slotStart, and slotEnd are required.',
+        )
+
+    db_client = client or _get_db()
+
+    meeting_doc = db_client.collection('meetings').document(meeting_id).get()
+    if not meeting_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message='Meeting not found.',
+        )
+
+    meeting = meeting_doc.to_dict() or {}
+
+    if auth_uid != meeting.get('hostUid'):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message='Only the host can book the meeting.',
+        )
+
+    member_uids: list[str] = meeting.get('memberUids', [])
+    summary = meeting.get('name', 'Meeting')
+
+    attendee_emails: list[str] = []
+    host_token: str = ''
+
+    for uid in member_uids:
+        user_doc = db_client.collection('users').document(uid).get()
+        if not user_doc.exists:
+            continue
+        user_data = user_doc.to_dict() or {}
+        email: str = user_data.get('email', '')
+        token: str = user_data.get('googleAccessToken', '')
+        if email:
+            attendee_emails.append(email)
+        if uid == meeting.get('hostUid') and token:
+            host_token = token
+
+    if not host_token:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message='Host must connect Google Calendar before booking a meeting.',
+        )
+
+    if not attendee_emails:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message='No attendee emails are available for this meeting.',
+        )
+
+    success = create_event_fn(host_token, summary, slot_start, slot_end, attendee_emails)
+    if not success:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message='Failed to create calendar invite event. Meeting was not booked.',
+        )
+
+    db_client.collection('meetings').document(meeting_id).update({
+        'status': 'scheduled',
+        'scheduledSlot': {'start': slot_start, 'end': slot_end},
+        'scheduledAt': admin_firestore.SERVER_TIMESTAMP,
+    })
+
+    return {
+        'success': True,
+        'attendeeCount': len(attendee_emails),
+    }
 
 
 @https_fn.on_call()
@@ -251,72 +492,12 @@ def book_meeting(req: https_fn.CallableRequest) -> dict:
 
     Flow:
         1. Verify caller is signed in and is the meeting host.
-        2. Fetch each member's access token and email.
-        3. Create a Google Calendar event on every member's calendar.
+        2. Fetch member emails and the host's Google Calendar token.
+        3. Create one organizer event on the host calendar with all members as attendees.
         4. Update meeting status to 'scheduled' with the booked slot.
         5. Return { success: true }.
     """
-    if req.auth is None:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
-            message='You must be signed in to book a meeting.',
-        )
-
-    meeting_id: str = req.data.get('meetingId', '').strip()
-    slot_start: str = req.data.get('slotStart', '').strip()
-    slot_end: str = req.data.get('slotEnd', '').strip()
-
-    if not meeting_id or not slot_start or not slot_end:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-            message='meetingId, slotStart, and slotEnd are required.',
-        )
-
-    client = _get_db()
-
-    meeting_doc = client.collection('meetings').document(meeting_id).get()
-    if not meeting_doc.exists:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.NOT_FOUND,
-            message='Meeting not found.',
-        )
-
-    meeting = meeting_doc.to_dict()
-
-    if req.auth.uid != meeting.get('hostUid'):
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-            message='Only the host can book the meeting.',
-        )
-
-    member_uids: list[str] = meeting.get('memberUids', [])
-    summary = meeting.get('name', 'Meeting')
-
-    attendee_emails: list[str] = []
-    member_tokens: dict[str, str] = {}
-
-    for uid in member_uids:
-        user_doc = client.collection('users').document(uid).get()
-        if not user_doc.exists:
-            continue
-        user_data = user_doc.to_dict() or {}
-        email: str = user_data.get('email', '')
-        token: str = user_data.get('googleAccessToken', '')
-        if email:
-            attendee_emails.append(email)
-        if token:
-            member_tokens[uid] = token
-
-    failed_uids: list[str] = []
-    for uid, token in member_tokens.items():
-        success = _create_calendar_event(token, summary, slot_start, slot_end, attendee_emails)
-        if not success:
-            failed_uids.append(uid)
-
-    client.collection('meetings').document(meeting_id).update({
-        'status': 'scheduled',
-        'scheduledSlot': {'start': slot_start, 'end': slot_end},
-        'scheduledAt': admin_firestore.SERVER_TIMESTAMP,
-    })
-
-    return {'success': True, 'failedCount': len(failed_uids)}
+    return _book_meeting_impl(
+        data=req.data,
+        auth_uid=req.auth.uid if req.auth else None,
+    )

@@ -5,7 +5,7 @@ Run with: python -m pytest functions/scheduling/test_algorithm.py -v
 
 from datetime import datetime, timedelta
 import pytest
-from algorithm import find_meeting_slots
+from scheduling.algorithm import find_meeting_slots
 
 
 # ---------------------------------------------------------------------------

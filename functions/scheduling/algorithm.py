@@ -267,6 +267,8 @@ def find_meeting_slots(
     work_days = sorted(common_work_days)
 
     meeting_duration = timedelta(minutes=meeting_duration_minutes)
+    work_days_evaluated = 0
+    work_days_with_sufficient_window = 0
 
     # -----------------------------------------------------------------------
     # Change 4: Build two separate busy slot lists
@@ -317,6 +319,7 @@ def find_meeting_slots(
                 continue
 
             if current_day.weekday() in work_days:
+                work_days_evaluated += 1
                 # Convert each participant's local work hours to UTC for this day,
                 # then intersect (latest start, earliest end) to get the shared window.
                 utc_starts = []
@@ -340,6 +343,8 @@ def find_meeting_slots(
                 if (day_end - day_start).total_seconds() / 60 < meeting_duration_minutes:
                     current_day += timedelta(days=1)
                     continue
+
+                work_days_with_sufficient_window += 1
 
                 candidate_start = day_start
 
@@ -388,6 +393,14 @@ def find_meeting_slots(
                 key=lambda s: (s.start.date(), -s.score, -s.buffer_score_avg)
             )
             return {'slots': [s.to_dict() for s in scored_slots[:top_n]]}
+
+    if work_days_evaluated > 0 and work_days_with_sufficient_window == 0:
+        return {
+            'error': (
+                'Meeting duration is longer than the shared work window across participants. '
+                'Reduce duration or update work hour settings.'
+            )
+        }
 
     return {
         'error': (
