@@ -5,6 +5,7 @@ import { signOut, deleteUser } from 'firebase/auth'
 import { toast } from 'sonner'
 import { X, Settings, LogOut, Trash2 } from 'lucide-react'
 import { db, auth } from '@/lib/firebase'
+import Avatar from '@/components/Avatar'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -157,9 +158,7 @@ export default function UserProfilePanel({ open, onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between p-5 border-b shrink-0">
           <div className="flex items-center gap-3">
-            {user?.photoURL && (
-              <img src={user.photoURL} alt={user.displayName ?? ''} className="w-10 h-10 rounded-full" />
-            )}
+            <Avatar src={user?.photoURL} name={user?.displayName} className="w-10 h-10 text-sm" />
             <div>
               <p className="font-semibold text-sm leading-tight">{user?.displayName}</p>
               <p className="text-xs text-muted-foreground">{user?.email}</p>

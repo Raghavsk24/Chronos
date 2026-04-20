@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { Trash2, LogOut, Search, ArrowUpDown } from 'lucide-react'
+import Avatar from '@/components/Avatar'
 import { toast } from 'sonner'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
@@ -274,17 +275,7 @@ export default function Lobbies() {
                   <div className="flex items-center justify-between mt-4 pt-3 border-t">
                     {/* Host info + meta */}
                     <div className="flex items-center gap-2">
-                      {hostMember?.photoURL ? (
-                        <img
-                          src={hostMember.photoURL}
-                          alt={hostMember.displayName}
-                          className="w-5 h-5 rounded-full"
-                        />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-[10px] font-semibold">
-                          {lobby.hostName?.[0] ?? '?'}
-                        </div>
-                      )}
+                      <Avatar src={hostMember?.photoURL} name={lobby.hostName} className="w-5 h-5 text-[10px]" />
                       <p className="text-xs text-muted-foreground">
                         {lobby.hostName}
                         {lobby.createdAt && <> · {formatDate(lobby.createdAt)}</>}

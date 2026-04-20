@@ -11,14 +11,22 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   const setUser = useAuthStore((state) => state.setUser)
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user)
-      setIsAuthenticated(!!user)
-      setLoading(false)
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
+        await user.reload()
+        const refreshed = auth.currentUser ?? user
+        setUser(refreshed)
+        setIsAuthenticated(true)
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone
-        updateDoc(doc(db, 'users', user.uid), { 'settings.timezone': browserTz }).catch(() => {})
+        updateDoc(doc(db, 'users', refreshed.uid), {
+          'settings.timezone': browserTz,
+          photoURL: refreshed.photoURL,
+        }).catch(() => {})
+      } else {
+        setUser(null)
+        setIsAuthenticated(false)
       }
+      setLoading(false)
     })
 
     return unsubscribe

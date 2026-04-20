@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import UserProfilePanel from '@/components/UserProfilePanel'
+import Avatar from '@/components/Avatar'
 
 const navItems = [
   { to: '/app/dashboard', label: 'Dashboard' },
@@ -27,13 +28,7 @@ export default function AppLayout() {
           onClick={() => setProfileOpen(true)}
           className="group flex items-center gap-2.5 pl-1 pr-3 py-1 rounded-full hover:bg-accent transition-colors"
         >
-          {user?.photoURL ? (
-            <img src={user.photoURL} alt={user.displayName ?? ''} className="w-7 h-7 rounded-full" />
-          ) : (
-            <div className="w-7 h-7 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold">
-              {user?.displayName?.[0] ?? '?'}
-            </div>
-          )}
+          <Avatar src={user?.photoURL} name={user?.displayName} className="w-7 h-7 text-xs" />
           <span className="text-sm font-medium leading-none group-hover:underline truncate max-w-[180px]">{user?.displayName}</span>
         </button>
       </header>

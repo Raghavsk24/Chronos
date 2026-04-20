@@ -6,6 +6,7 @@ import {
 } from 'firebase/firestore'
 import { toast } from 'sonner'
 import { ChevronRight, Pencil, Trash2, LogOut, X, Search, ArrowUpDown, Link2, Copy, ArrowLeft } from 'lucide-react'
+import Avatar from '@/components/Avatar'
 import { db } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
@@ -425,17 +426,7 @@ export default function LobbyDetail() {
               return (
                 <li key={member.uid} className="flex items-center justify-between gap-3 py-2.5">
                   <div className="flex items-center gap-2.5 min-w-0">
-                    {member.photoURL ? (
-                      <img
-                        src={member.photoURL}
-                        alt={member.displayName}
-                        className="w-8 h-8 rounded-full shrink-0"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold shrink-0">
-                        {member.displayName?.[0] ?? '?'}
-                      </div>
-                    )}
+                    <Avatar src={member.photoURL} name={member.displayName} className="w-8 h-8 text-xs" />
                     <div className="min-w-0">
                       <p className="text-sm font-medium leading-tight truncate">
                         {member.displayName}
