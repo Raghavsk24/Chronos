@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { ArrowLeft, ExternalLink, CheckCircle2, Settings, Trash2, LogOut, RotateCcw, X } from 'lucide-react'
 import { db, functions } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
+import Avatar from '@/components/Avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -148,6 +149,7 @@ export default function MeetingDetail() {
   const [rebooking, setRebooking] = useState(false)
   const [calendarConnectionReady, setCalendarConnectionReady] = useState(false)
   const [calendarConnectionReason, setCalendarConnectionReason] = useState('Checking Google Calendar connection...')
+  const [calendarConnectionByUid, setCalendarConnectionByUid] = useState<Record<string, boolean>>({})
 
   // Meeting settings
   const [showSettings, setShowSettings] = useState(false)
@@ -206,7 +208,21 @@ export default function MeetingDetail() {
       getDoc(doc(db, 'users', user.uid)),
     ])
     if (!meetingSnap.exists()) { navigate(`/app/lobbies/${lobbyId}`); return }
-    setMeeting({ id: meetingSnap.id, ...meetingSnap.data() } as Meeting)
+    const meetingData = { id: meetingSnap.id, ...meetingSnap.data() } as Meeting
+    setMeeting(meetingData)
+
+    const participantUids = meetingData.memberUids ?? meetingData.members?.map((m) => m.uid) ?? []
+    const statusEntries = await Promise.all(
+      participantUids.map(async (uid) => {
+        const memberSnap = await getDoc(doc(db, 'users', uid))
+        if (!memberSnap.exists()) return [uid, false] as const
+        const memberData = memberSnap.data() as Record<string, unknown>
+        const connected = Boolean(memberData.googleAccessToken) && isGoogleTokenFresh(memberData.tokenUpdatedAt as FirestoreTimestampLike)
+        return [uid, connected] as const
+      })
+    )
+    setCalendarConnectionByUid(Object.fromEntries(statusEntries))
+
     const tz = userSnap.data()?.settings?.timezone
     if (tz) setUserTimezone(tz)
     setLoading(false)
@@ -637,6 +653,55 @@ export default function MeetingDetail() {
           </div>
         )}
         </div>
+      </div>
+
+      <div className="px-8 pb-8">
+        <section className="border rounded-xl p-5">
+          <h2 className="font-semibold mb-3">Participants</h2>
+          {!meeting.members || meeting.members.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No participants found for this meeting.</p>
+          ) : (
+            <ul className="flex flex-col divide-y">
+              {meeting.members.map((member) => {
+                const isHostMember = member.uid === meeting.hostUid
+                const isMe = member.uid === user?.uid
+                const connected = calendarConnectionByUid[member.uid]
+
+                return (
+                  <li key={member.uid} className="flex items-center justify-between gap-3 py-3">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <Avatar src={member.photoURL} name={member.displayName} className="w-8 h-8 text-xs" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium leading-tight truncate">
+                          {member.displayName}
+                          {isMe && <span className="text-muted-foreground font-normal text-xs"> (you)</span>}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span
+                        className={`text-[11px] border rounded-full px-2 py-0.5 ${
+                          connected
+                            ? 'text-green-700 border-green-200 bg-green-50'
+                            : 'text-amber-700 border-amber-200 bg-amber-50'
+                        }`}
+                      >
+                        {connected ? 'Calendar connected' : 'Calendar not connected'}
+                      </span>
+                      {isHostMember && (
+                        <span className="text-xs text-muted-foreground border rounded-full px-2 py-0.5">
+                          Host
+                        </span>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
       </div>
 
       {/* Delete confirmation */}

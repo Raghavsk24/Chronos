@@ -177,9 +177,6 @@ export default function Dashboard() {
                     <CalendarDays className="size-5 mx-auto text-muted-foreground" />
                     <p className="mt-2 text-sm font-medium">No meetings yet</p>
                     <p className="text-xs text-muted-foreground mt-1">Create your first meeting to start scheduling.</p>
-                    <div className="mt-3 flex justify-center">
-                      <CreateMeetingModal onCreated={fetchData} />
-                    </div>
                   </div>
                 ) : (
                   <ul className="flex flex-col gap-2">
@@ -269,9 +266,6 @@ export default function Dashboard() {
                     <Users className="size-5 mx-auto text-muted-foreground" />
                     <p className="mt-2 text-sm font-medium">No lobbies yet</p>
                     <p className="text-xs text-muted-foreground mt-1">Create a lobby to invite people and run meetings.</p>
-                    <div className="mt-3 flex justify-center">
-                      <CreateLobbyModal onCreated={fetchData} />
-                    </div>
                   </div>
                 ) : (
                   <ul className="flex flex-col gap-2">

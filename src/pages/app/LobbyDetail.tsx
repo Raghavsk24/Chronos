@@ -52,6 +52,34 @@ interface Meeting {
   createdAt?: { seconds: number }
 }
 
+type FirestoreTimestampLike =
+  | { seconds: number }
+  | { toDate: () => Date }
+  | Date
+  | string
+  | number
+  | null
+  | undefined
+
+const GOOGLE_TOKEN_STALE_MINUTES = 55
+
+function isGoogleTokenFresh(tokenUpdatedAt: FirestoreTimestampLike): boolean {
+  if (!tokenUpdatedAt) return false
+
+  let tokenDate: Date | null = null
+  if (tokenUpdatedAt instanceof Date) tokenDate = tokenUpdatedAt
+  else if (typeof tokenUpdatedAt === 'string' || typeof tokenUpdatedAt === 'number') tokenDate = new Date(tokenUpdatedAt)
+  else if (typeof (tokenUpdatedAt as { toDate?: () => Date }).toDate === 'function') {
+    tokenDate = (tokenUpdatedAt as { toDate: () => Date }).toDate()
+  } else if (typeof (tokenUpdatedAt as { seconds?: number }).seconds === 'number') {
+    tokenDate = new Date((tokenUpdatedAt as { seconds: number }).seconds * 1000)
+  }
+
+  if (!tokenDate || Number.isNaN(tokenDate.getTime())) return false
+  const ageMs = Date.now() - tokenDate.getTime()
+  return ageMs <= GOOGLE_TOKEN_STALE_MINUTES * 60 * 1000
+}
+
 function formatDate(createdAt?: { seconds: number } | null): string {
   if (!createdAt) return '-'
   return new Date(createdAt.seconds * 1000).toLocaleDateString('en-US', {
@@ -107,6 +135,7 @@ export default function LobbyDetail() {
   const [meetingSearch, setMeetingSearch] = useState('')
   const [meetingSortAsc, setMeetingSortAsc] = useState(false)
   const [statusFilter, setStatusFilter] = useState<MeetingStatus | 'all'>('all')
+  const [calendarConnectionByUid, setCalendarConnectionByUid] = useState<Record<string, boolean>>({})
 
   const fetchAll = useCallback(async () => {
     if (!id || !user) return
@@ -116,8 +145,21 @@ export default function LobbyDetail() {
       getDocs(query(collection(db, 'meetings'), where('lobbyId', '==', id))),
     ])
     if (!lobbySnap.exists()) { navigate('/app/lobbies'); return }
-    setLobby({ id: lobbySnap.id, ...lobbySnap.data() } as Lobby)
+    const lobbyData = { id: lobbySnap.id, ...lobbySnap.data() } as Lobby
+    setLobby(lobbyData)
     setMeetings(meetingsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Meeting)))
+
+    const statusEntries = await Promise.all(
+      (lobbyData.memberUids ?? []).map(async (uid) => {
+        const memberSnap = await getDoc(doc(db, 'users', uid))
+        if (!memberSnap.exists()) return [uid, false] as const
+        const memberData = memberSnap.data() as Record<string, unknown>
+        const connected = Boolean(memberData.googleAccessToken) && isGoogleTokenFresh(memberData.tokenUpdatedAt as FirestoreTimestampLike)
+        return [uid, connected] as const
+      })
+    )
+    setCalendarConnectionByUid(Object.fromEntries(statusEntries))
+
     const tz = userSnap.data()?.settings?.timezone
     if (tz) setUserTimezone(tz)
     setLoading(false)
@@ -218,6 +260,11 @@ export default function LobbyDetail() {
         ...lobby,
         members: lobby.members.filter((m) => m.uid !== member.uid),
         memberUids: lobby.memberUids.filter((u) => u !== member.uid),
+      })
+      setCalendarConnectionByUid((prev) => {
+        const next = { ...prev }
+        delete next[member.uid]
+        return next
       })
       toast.success(`${member.displayName} removed.`)
     } catch {
@@ -516,6 +563,15 @@ export default function LobbyDetail() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    <span
+                      className={`text-[11px] border rounded-full px-2 py-0.5 ${
+                        calendarConnectionByUid[member.uid]
+                          ? 'text-green-700 border-green-200 bg-green-50'
+                          : 'text-amber-700 border-amber-200 bg-amber-50'
+                      }`}
+                    >
+                      {calendarConnectionByUid[member.uid] ? 'Calendar connected' : 'Calendar not connected'}
+                    </span>
                     {isThisHost && (
                       <span className="text-xs text-muted-foreground border rounded-full px-2 py-0.5">
                         Host
