@@ -129,3 +129,15 @@
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 }
+
+[data-sonner-toast] {
+  padding-right: 2.75rem !important;
+}
+
+[data-sonner-toast] [data-close-button] {
+  left: auto !important;
+  right: 0.75rem !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  margin: 0 !important;
+}

@@ -207,7 +207,11 @@ export default function UserProfilePanel({ open, onClose }: Props) {
             <Settings className="size-4" />
             Go to Settings
           </Button>
-          <Button variant="ghost" className="justify-start gap-2" onClick={handleSignOut}>
+          <Button
+            variant="ghost"
+            className="justify-start gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+            onClick={handleSignOut}
+          >
             <LogOut className="size-4" />
             Sign out
           </Button>

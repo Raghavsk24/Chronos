@@ -57,7 +57,7 @@ export default function AppLayout() {
             </NavLink>
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-muted-foreground hover:bg-accent hover:text-accent-foreground text-left"
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-destructive hover:bg-destructive/10 hover:text-destructive text-left"
             >
               <LogOut className="size-3.5" />
               Sign out
