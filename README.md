@@ -1,6 +1,6 @@
 # Chronos
 
-Chronos is a smart meeting scheduler that finds the best time for everyone. It connects to each participant's Google Calendar, analyses availability across the group, and ranks candidate slots using a multi-factor scoring algorithm that accounts for time-of-day preference, calendar breathing room, and proximity to a target date.
+Chronos is a smart group meeting scheduler. It connects to each participant's Google Calendar, analyses availability across the group, and ranks candidate time slots using a multi-factor scoring algorithm that accounts for time-of-day preference, calendar breathing room, and proximity to a target date.
 
 ---
 
@@ -99,59 +99,121 @@ Slots are sorted by final score (descending), with the buffer average as a tiebr
 
 ## Prerequisites
 
-- Node.js 18+
-- Python 3.11
-- Firebase CLI (`npm install -g firebase-tools`)
-- A Firebase project with Auth, Firestore, Functions, and Hosting enabled
-- A Google Cloud OAuth 2.0 client ID with the Calendar API enabled
-- A Resend account for transactional email
+Before you begin, make sure you have the following installed and set up:
+
+- **Node.js 18+** — [nodejs.org](https://nodejs.org)
+- **Python 3.11** — [python.org](https://python.org)
+- **Firebase CLI** — install with `npm install -g firebase-tools`, then run `firebase login`
+- **A Firebase project** with Auth, Firestore, Functions, and Hosting enabled — [console.firebase.google.com](https://console.firebase.google.com)
+- **A Google Cloud OAuth 2.0 client** with the Google Calendar API enabled — [console.cloud.google.com](https://console.cloud.google.com)
+- **A Resend account** for transactional email — [resend.com](https://resend.com)
 
 ---
 
-## Environment Setup
+## 1. Clone the repository
 
-### Frontend - `src/.env.local`
-
-```env
-VITE_FIREBASE_API_KEY=
-VITE_FIREBASE_AUTH_DOMAIN=
-VITE_FIREBASE_PROJECT_ID=
-VITE_FIREBASE_STORAGE_BUCKET=
-VITE_FIREBASE_MESSAGING_SENDER_ID=
-VITE_FIREBASE_APP_ID=
+```bash
+git clone https://github.com/your-username/chronos.git
+cd chronos
 ```
-
-### Backend - `functions/.env`
-
-```env
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
-RESEND_API_KEY=
-REMINDER_FROM_EMAIL=
-```
-
-`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` come from your OAuth 2.0 client in the Google Cloud Console under APIs and Services > Credentials. `RESEND_API_KEY` comes from your Resend dashboard. `REMINDER_FROM_EMAIL` must be a verified sender address or domain on Resend.
 
 ---
 
-## Running Locally
+## 2. Set up environment variables
 
-### 1. Install frontend dependencies
+### Frontend — `.env.local` (project root)
+
+Copy the example file and fill in your Firebase project values:
+
+```bash
+cp .env.example .env.local
+```
+
+Open `.env.local` and fill in each value. You can find all of these in the [Firebase Console](https://console.firebase.google.com) under **Project Settings > Your Apps**:
+
+```env
+VITE_FIREBASE_API_KEY=your_firebase_api_key_here
+VITE_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_project_id.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+VITE_FIREBASE_APP_ID=your_firebase_app_id
+```
+
+### Backend — `functions/.env`
+
+Copy the example file and fill in your credentials:
+
+```bash
+cp functions/.env.example functions/.env
+```
+
+Open `functions/.env` and fill in each value:
+
+```env
+GOOGLE_CLIENT_ID=your_google_oauth_client_id_here
+GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret_here
+RESEND_API_KEY=your_resend_api_key_here
+REMINDER_FROM_EMAIL=your_verified_sender@example.com
+```
+
+**Where to get each value:**
+
+| Variable | Where to find it |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Google Cloud Console > APIs and Services > Credentials > your OAuth 2.0 client |
+| `GOOGLE_CLIENT_SECRET` | Same page as above, click the client to reveal the secret |
+| `RESEND_API_KEY` | Resend dashboard > API Keys |
+| `REMINDER_FROM_EMAIL` | A sender address or domain you have verified in Resend |
+
+---
+
+## 3. Install frontend dependencies
 
 ```bash
 npm install
 ```
 
-### 2. Set up the Python virtual environment
+---
+
+## 4. Set up the Python virtual environment
+
+**On macOS / Linux:**
+
+```bash
+cd functions
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cd ..
+```
+
+**On Windows:**
 
 ```bash
 cd functions
 python -m venv venv
-venv/Scripts/pip install -r requirements.txt
+venv\Scripts\pip install -r requirements.txt
 cd ..
 ```
 
-### 3. Start the frontend dev server
+---
+
+## 5. Connect Firebase to your project
+
+```bash
+firebase use --add
+```
+
+Select your Firebase project from the list. If you only have one project it will be selected automatically.
+
+---
+
+## 6. Run the app locally
+
+Open two terminals in the project root and run each command in a separate terminal.
+
+**Terminal 1 — frontend dev server:**
 
 ```bash
 npm run dev
@@ -159,15 +221,13 @@ npm run dev
 
 The frontend will be available at `http://localhost:5173`.
 
-### 4. Start the Firebase Functions emulator
-
-In a separate terminal:
+**Terminal 2 — Firebase Functions emulator:**
 
 ```bash
 firebase emulators:start
 ```
 
-The functions emulator runs at `http://localhost:5001`. The frontend is already configured to point to it in development mode.
+The functions emulator runs at `http://localhost:5001`. The frontend is already configured to point to it automatically in development mode.
 
 ---
 
@@ -182,11 +242,7 @@ firebase deploy --only hosting
 
 ### Deploy Cloud Functions
 
-```bash
-firebase deploy --only functions
-```
-
-Set your environment variables in the Firebase console under Functions > Configuration, or use the Firebase CLI:
+Set your secrets first:
 
 ```bash
 firebase functions:secrets:set GOOGLE_CLIENT_ID
@@ -195,3 +251,13 @@ firebase functions:secrets:set RESEND_API_KEY
 firebase functions:secrets:set REMINDER_FROM_EMAIL
 ```
 
+Then deploy:
+
+```bash
+firebase deploy --only functions
+```
+
+### After deploying
+
+- Add your production domain to **Google Cloud Console > APIs and Services > Credentials > Authorized redirect URIs**
+- Add your production domain to **Firebase Console > Authentication > Settings > Authorized domains**
