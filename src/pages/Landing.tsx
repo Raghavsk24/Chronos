@@ -254,7 +254,7 @@ export default function Landing() {
           </div>
         </section>
 
-        <hr className="my-12 border-t-[2px] border-neutral-500" />
+        <div className="my-12 h-[1.5px] bg-gradient-to-r from-transparent via-neutral-400 to-transparent" />
 
         <section id="how-it-works" className="scroll-mt-24 py-4">
           <h2 className="text-center text-3xl font-black tracking-tight text-foreground sm:text-5xl">
@@ -272,7 +272,7 @@ export default function Landing() {
                 <h3 className="mt-2 text-lg font-bold text-foreground">Create a Lobby</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Start a new lobby and invite your participants with a single shareable link.</p>
               </div>
-              <div className="mt-auto pt-4 min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2">
+              <div className="mt-[15px] min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2">
                 <div className="rounded-md border border-input bg-background px-2 py-1.5 text-xs text-foreground">Team Sync Q2</div>
                 <div className="flex items-center gap-1 pt-1">
                   {['V', 'T', 'R'].map((initial) => (
@@ -294,7 +294,7 @@ export default function Landing() {
                 <h3 className="mt-2 text-lg font-bold text-foreground">Set Your Preferences</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Each member connects their Google Calendar and configures their work hours and availability.</p>
               </div>
-              <div className="mt-auto pt-4 min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2">
+              <div className="mt-[15px] min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-muted-foreground">Work hours</span>
                   <span className="text-[10px] font-semibold text-foreground">9:00 AM - 5:00 PM</span>
@@ -327,7 +327,7 @@ export default function Landing() {
                 <h3 className="mt-2 text-lg font-bold text-foreground">Chronos Finds the Time</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">The algorithm analyses everyone's calendar and ranks the best meeting slots for the group.</p>
               </div>
-              <div className="mt-auto pt-4 min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2.5">
+              <div className="mt-[15px] min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2.5">
                 {topSlots.map((slot, i) => (
                   <div key={i}>
                     <div className="flex items-center justify-between">
@@ -352,7 +352,7 @@ export default function Landing() {
                 <h3 className="mt-2 text-lg font-bold text-foreground">Book in One Click</h3>
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">Pick a slot and Chronos confirms it on every participant's Google Calendar instantly.</p>
               </div>
-              <div className="mt-auto pt-4 min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2">
+              <div className="mt-[15px] min-h-[120px] rounded-xl border border-border bg-muted/50 p-3 space-y-2">
                 <div className="rounded-md border-2 border-primary bg-primary/10 px-2 py-1.5 flex items-center justify-between">
                   <div>
                     <div className="text-[10px] font-semibold text-primary">Mon Apr 21 · 2:00 PM</div>
@@ -370,7 +370,7 @@ export default function Landing() {
           </div>
         </section>
 
-        <hr className="my-12 border-t-[2px] border-neutral-500" />
+        <div className="my-12 h-[1.5px] bg-gradient-to-r from-transparent via-neutral-400 to-transparent" />
 
         <section id="reviews" className="scroll-mt-24 py-4">
           <h2 className="text-center text-3xl font-black tracking-tight text-foreground sm:text-5xl">
