@@ -17,14 +17,14 @@ export default function MarketingFooter() {
           <p className="text-sm font-semibold text-foreground">Product</p>
           <ul className="mt-3 space-y-2">
             <li>
-              <Link to="/how-it-works" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+              <a href="/#how-it-works" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
                 How It Works
-              </Link>
+              </a>
             </li>
             <li>
-              <Link to="/#reviews" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
+              <a href="/#reviews" className="text-sm text-muted-foreground transition-colors hover:text-foreground">
                 Testimonials
-              </Link>
+              </a>
             </li>
           </ul>
         </div>

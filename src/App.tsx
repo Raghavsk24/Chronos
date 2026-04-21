@@ -3,9 +3,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'sonner'
 
 const Landing = lazy(() => import('@/pages/Landing'))
-const HowItWorks = lazy(() => import('@/pages/HowItWorks'))
-const About = lazy(() => import('@/pages/About'))
-const Reviews = lazy(() => import('@/pages/Reviews'))
 const Login = lazy(() => import('@/pages/Login'))
 const AuthAction = lazy(() => import('@/pages/AuthAction'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
@@ -40,9 +37,6 @@ export default function App() {
       <Toaster richColors position="top-right" closeButton />
       <Routes>
         <Route path="/" element={<Suspense fallback={<PageFallback />}><Landing /></Suspense>} />
-        <Route path="/how-it-works" element={<Suspense fallback={<PageFallback />}><HowItWorks /></Suspense>} />
-        <Route path="/about" element={<Suspense fallback={<PageFallback />}><About /></Suspense>} />
-        <Route path="/reviews" element={<Suspense fallback={<PageFallback />}><Reviews /></Suspense>} />
         <Route path="/login" element={<Suspense fallback={<PageFallback />}><Login /></Suspense>} />
         <Route path="/auth/action" element={<Suspense fallback={<PageFallback />}><AuthAction /></Suspense>} />
         <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><Onboarding /></Suspense>} />

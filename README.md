@@ -4,9 +4,22 @@ Chronos is a smart group meeting scheduler. It connects to each participant's Go
 
 ---
 
-## Tech Stack
+## 🛠️ Tech Stack
 
 ### Frontend
+
+![React](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![React Router](https://img.shields.io/badge/React_Router_v7-CA4245?style=for-the-badge&logo=react-router&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![shadcn/ui](https://img.shields.io/badge/shadcn%2Fui-000000?style=for-the-badge&logo=shadcnui&logoColor=white)
+![Zustand](https://img.shields.io/badge/Zustand-443E38?style=for-the-badge&logo=react&logoColor=white)
+![date-fns](https://img.shields.io/badge/date--fns-770C56?style=for-the-badge&logo=npm&logoColor=white)
+![Sonner](https://img.shields.io/badge/Sonner-000000?style=for-the-badge&logo=npm&logoColor=white)
+![Lucide](https://img.shields.io/badge/Lucide_React-F56565?style=for-the-badge&logo=lucide&logoColor=white)
+![FullCalendar](https://img.shields.io/badge/FullCalendar-4285F4?style=for-the-badge&logo=google-calendar&logoColor=white)
+
 | Technology | Purpose |
 |---|---|
 | React 19 + TypeScript | UI framework |
@@ -21,6 +34,13 @@ Chronos is a smart group meeting scheduler. It connects to each participant's Go
 | FullCalendar | Calendar view |
 
 ### Backend
+
+![Python](https://img.shields.io/badge/Python_3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Firebase Functions](https://img.shields.io/badge/Firebase_Functions-FF6F00?style=for-the-badge&logo=firebase&logoColor=white)
+![Firebase Admin](https://img.shields.io/badge/Firebase_Admin_SDK-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
+![Google Calendar API](https://img.shields.io/badge/Google_Calendar_API-4285F4?style=for-the-badge&logo=google-calendar&logoColor=white)
+![Resend](https://img.shields.io/badge/Resend-000000?style=for-the-badge&logo=mail&logoColor=white)
+
 | Technology | Purpose |
 |---|---|
 | Python 3.11 | Cloud Functions runtime |
@@ -31,6 +51,12 @@ Chronos is a smart group meeting scheduler. It connects to each participant's Go
 | tzdata + zoneinfo | IANA timezone database for cross-timezone scheduling |
 
 ### Infrastructure
+
+![Firebase Auth](https://img.shields.io/badge/Firebase_Auth-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
+![Firestore](https://img.shields.io/badge/Firestore-FF6F00?style=for-the-badge&logo=firebase&logoColor=white)
+![Firebase Hosting](https://img.shields.io/badge/Firebase_Hosting-FFA000?style=for-the-badge&logo=firebase&logoColor=white)
+![Emulator Suite](https://img.shields.io/badge/Firebase_Emulator_Suite-F57F17?style=for-the-badge&logo=firebase&logoColor=white)
+
 | Technology | Purpose |
 |---|---|
 | Firebase Auth | Google OAuth sign-in |
@@ -40,7 +66,7 @@ Chronos is a smart group meeting scheduler. It connects to each participant's Go
 
 ---
 
-## Scheduling Algorithm
+## ⚙️ Scheduling Algorithm
 
 The algorithm lives in `functions/scheduling/algorithm.py` and runs inside the `schedule_meeting` Cloud Function.
 
@@ -96,6 +122,10 @@ score = 0.7 * proximity_score + 0.15 * position_score + 0.15 * buffer_score
 Slots are sorted by final score (descending), with the buffer average as a tiebreaker. The top 5 are returned to the frontend where they are displayed with a score breakdown tooltip on each slot.
 
 ---
+
+---
+
+## 🚀 Getting Started
 
 ## Prerequisites
 
@@ -231,7 +261,7 @@ The functions emulator runs at `http://localhost:5001`. The frontend is already 
 
 ---
 
-## Deploying to Production
+## 📦 Deploying to Production
 
 ### Deploy the frontend
 

@@ -207,7 +207,7 @@ export default function Landing() {
                 </div>
 
                 {/* First pill */}
-                <div className="pointer-events-none absolute right-[-56px] top-[67%] z-20 w-[285px] rounded-lg border border-border bg-card p-2 shadow-lg">
+                <div className="pointer-events-none absolute right-[-66px] top-[67%] z-20 w-[285px] rounded-lg border border-border bg-card p-2 shadow-lg">
                   {(() => {
                     const booking = heroBookings[0]
                     const { label, className } = meetingStatusConfig(booking.status)
@@ -229,7 +229,7 @@ export default function Landing() {
                 </div>
 
                 {/* Second pill */}
-                <div className="pointer-events-none absolute right-[-16px] top-[calc(86%+15px)] z-20 w-[275px] rounded-lg border border-border bg-card p-2 shadow-lg">
+                <div className="pointer-events-none absolute right-[-26px] top-[calc(86%+15px)] z-20 w-[275px] rounded-lg border border-border bg-card p-2 shadow-lg">
                   {(() => {
                     const booking = heroBookings[1]
                     const { label, className } = meetingStatusConfig(booking.status)
