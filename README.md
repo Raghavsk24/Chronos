@@ -101,12 +101,12 @@ Slots are sorted by final score (descending), with the buffer average as a tiebr
 
 Before you begin, make sure you have the following installed and set up:
 
-- **Node.js 18+** — [nodejs.org](https://nodejs.org)
-- **Python 3.11** — [python.org](https://python.org)
-- **Firebase CLI** — install with `npm install -g firebase-tools`, then run `firebase login`
-- **A Firebase project** with Auth, Firestore, Functions, and Hosting enabled — [console.firebase.google.com](https://console.firebase.google.com)
-- **A Google Cloud OAuth 2.0 client** with the Google Calendar API enabled — [console.cloud.google.com](https://console.cloud.google.com)
-- **A Resend account** for transactional email — [resend.com](https://resend.com)
+- **Node.js 18+** - [nodejs.org](https://nodejs.org)
+- **Python 3.11** - [python.org](https://python.org)
+- **Firebase CLI** - install with `npm install -g firebase-tools`, then run `firebase login`
+- **A Firebase project** with Auth, Firestore, Functions, and Hosting enabled - [console.firebase.google.com](https://console.firebase.google.com)
+- **A Google Cloud OAuth 2.0 client** with the Google Calendar API enabled - [console.cloud.google.com](https://console.cloud.google.com)
+- **A Resend account** for transactional email - [resend.com](https://resend.com)
 
 ---
 
@@ -121,7 +121,7 @@ cd chronos
 
 ## 2. Set up environment variables
 
-### Frontend — `.env.local` (project root)
+### Frontend - `.env.local` (project root)
 
 Copy the example file and fill in your Firebase project values:
 
@@ -140,7 +140,7 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
 VITE_FIREBASE_APP_ID=your_firebase_app_id
 ```
 
-### Backend — `functions/.env`
+### Backend - `functions/.env`
 
 Copy the example file and fill in your credentials:
 
@@ -213,7 +213,7 @@ Select your Firebase project from the list. If you only have one project it will
 
 Open two terminals in the project root and run each command in a separate terminal.
 
-**Terminal 1 — frontend dev server:**
+**Terminal 1 - frontend dev server:**
 
 ```bash
 npm run dev
@@ -221,7 +221,7 @@ npm run dev
 
 The frontend will be available at `http://localhost:5173`.
 
-**Terminal 2 — Firebase Functions emulator:**
+**Terminal 2 - Firebase Functions emulator:**
 
 ```bash
 firebase emulators:start
