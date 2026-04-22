@@ -23,7 +23,7 @@ interface Props {
   onCreated: () => void
 }
 
-type DayPart = 'morning' | 'midday' | 'afternoon'
+type DayPart = 'morning' | 'afternoon' | 'evening'
 
 function formatDisplayDate(iso: string): string {
   const [y, m, d] = iso.split('-')
@@ -137,8 +137,8 @@ export default function CreateLobbyModal({ onCreated }: Props) {
 
   const dayPartOptions: { value: DayPart; label: string }[] = [
     { value: 'morning', label: 'Morning' },
-    { value: 'midday', label: 'Midday' },
     { value: 'afternoon', label: 'Afternoon' },
+    { value: 'evening', label: 'Evening' },
   ]
 
   const canSubmit = lobbyName.trim() && meetingName.trim() && !loading

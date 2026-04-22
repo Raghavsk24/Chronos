@@ -76,13 +76,13 @@ interface Meeting {
   members?: Member[]
   createdAt?: FirestoreTimestampLike
   preferences?: {
-    dayPart?: 'morning' | 'midday' | 'afternoon'
+    dayPart?: 'morning' | 'afternoon' | 'evening'
     targetDates?: string[]
     extraBuffer?: boolean
   } | null
 }
 
-type DayPart = 'morning' | 'midday' | 'afternoon'
+type DayPart = 'morning' | 'afternoon' | 'evening'
 
 function formatDisplayDate(iso: string): string {
   const [y, m, d] = iso.split('-')
@@ -113,6 +113,8 @@ interface CoverageSummary {
   ignoredMembers: string[]
 }
 
+const INITIAL_VISIBLE_SLOTS = 5
+
 
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
@@ -142,6 +144,7 @@ export default function MeetingDetail() {
   const [calendarConnectionReason, setCalendarConnectionReason] = useState('Checking Google Calendar connection...')
   const [calendarConnectionByUid, setCalendarConnectionByUid] = useState<Record<string, boolean>>({})
   const [coverageSummary, setCoverageSummary] = useState<CoverageSummary | null>(null)
+  const [visibleSlotCount, setVisibleSlotCount] = useState(INITIAL_VISIBLE_SLOTS)
 
   // Meeting settings
   const [showSettings, setShowSettings] = useState(false)
@@ -266,6 +269,7 @@ export default function MeetingDetail() {
     setSlots([])
     setSelectedSlot(null)
     setScheduleError('')
+    setVisibleSlotCount(INITIAL_VISIBLE_SLOTS)
     try {
       const result = await scheduleMeeting({ meetingId: meeting.id })
       const data = result.data as {
@@ -282,6 +286,11 @@ export default function MeetingDetail() {
       } else {
         setSlots(data.slots ?? [])
         if (data.warning) toast.info(data.warning)
+        if (data.coverage?.ignoredMembers?.length) {
+          toast.info(
+            `Ignored by scheduler: ${data.coverage.ignoredMembers.join(', ')} because their Google Calendar is not connected.`
+          )
+        }
         const targetDates = meeting.preferences?.targetDates
         if (!data.slots?.length) {
           if (targetDates?.length) {
@@ -290,7 +299,7 @@ export default function MeetingDetail() {
             ).join(', ')
             toast.info(`No meeting times were found around your target date${targetDates.length > 1 ? 's' : ''} of ${labels}.`)
           }
-          setScheduleError('No available slots found in the next 4 weeks.')
+          setScheduleError('Sorry we were unable to find any available times to host this meeting for your group. We searched up to month ahead from today. Please free up time on your calendars or change the target date and try again.')
         } else if (targetDates?.length && data.slots?.length) {
           const targetDateSet = new Set(targetDates)
           const anyOnTarget = data.slots.some((s) => {
@@ -386,7 +395,8 @@ export default function MeetingDetail() {
       duration: String(meeting.duration),
       meetingLink: meeting.meetingLink ?? '',
     })
-    setDayPart(meeting.preferences?.dayPart ?? null)
+    const storedDayPart = meeting.preferences?.dayPart
+    setDayPart((storedDayPart === 'midday' ? 'afternoon' : storedDayPart) ?? null)
     setTargetDates(meeting.preferences?.targetDates ?? [])
     setTargetingDate(Boolean(meeting.preferences?.targetDates?.length))
     setExtraBuffer(Boolean(meeting.preferences?.extraBuffer))
@@ -397,6 +407,9 @@ export default function MeetingDetail() {
     setCalendarMonth(initialDate)
     setShowSettings(true)
   }
+
+  const visibleSlots = slots.slice(0, visibleSlotCount)
+  const hiddenSlotCount = Math.max(slots.length - visibleSlots.length, 0)
 
   const addTargetDate = () => {
     const iso = toIsoDate(selectedTargetDate)
@@ -630,7 +643,7 @@ export default function MeetingDetail() {
               <div>
                 <h2 className="font-semibold">Find a meeting time</h2>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  Searches everyone's Google Calendar for the next 4 weeks.
+                  Searches everyone's Google Calendar from 1 hour from now up to 1 month ahead.
                 </p>
               </div>
               <div className="shrink-0">
@@ -653,13 +666,18 @@ export default function MeetingDetail() {
                     <> ({coverageSummary.ignoredMembers.join(', ')})</>
                   )}
                 </p>
+                {coverageSummary.ignoredMembers.length > 0 && (
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    These participants were ignored because their Google Calendar is not connected.
+                  </p>
+                )}
               </div>
             )}
 
             {slots.length > 0 && (
               <div className="flex flex-col gap-2">
                 <p className="text-sm text-muted-foreground">Select a time to book:</p>
-                {slots.map((slot, i) => {
+                {visibleSlots.map((slot, i) => {
                   const isSelected = selectedSlot?.start === slot.start
                   return (
                     <button
@@ -680,19 +698,35 @@ export default function MeetingDetail() {
                         <span className="relative inline-flex items-center justify-center text-muted-foreground group/why" aria-label="Why this slot">
                           <CircleHelp className="size-4" />
                           <span className="pointer-events-none absolute right-0 top-full z-20 mt-2 hidden w-[260px] rounded-md border bg-popover p-2 text-xs text-foreground shadow-md group-hover/why:block">
-                            <p className="font-bold mb-1">Overall score: {(slot.score * 100).toFixed(1)}%</p>
-                            {slot.proximity_score != null && (
-                              <p>Proximity to target date: {(slot.proximity_score * 100).toFixed(1)}%</p>
-                            )}
+                            <p className="font-bold mb-1">Total score: {(slot.score * 100).toFixed(1)}%</p>
+                            <p>Proximity score: {((slot.proximity_score ?? 0) * 100).toFixed(1)}%</p>
                             <p>Position score: {(slot.position_score * 100).toFixed(1)}%</p>
-                            <p>Buffer score (minimum): {(slot.buffer_score * 100).toFixed(1)}%</p>
-                            <p>Buffer score (average): {(slot.buffer_score_avg * 100).toFixed(1)}%</p>
+                            <p>Buffer score: {(slot.buffer_score * 100).toFixed(1)}%</p>
                           </span>
                         </span>
                       </div>
                     </button>
                   )
                 })}
+
+                {slots.length > INITIAL_VISIBLE_SLOTS && (
+                  <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">
+                      Showing {visibleSlots.length} out of {slots.length} available time slots
+                    </p>
+                    {hiddenSlotCount > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setVisibleSlotCount((prev) => Math.min(prev + 5, slots.length))}
+                        className="h-7 px-2.5 text-xs"
+                      >
+                        Show {Math.min(5, hiddenSlotCount)} more
+                      </Button>
+                    )}
+                  </div>
+                )}
 
                 {selectedSlot && (
                   <>
@@ -742,6 +776,11 @@ export default function MeetingDetail() {
                             {isMe && <span className="text-muted-foreground font-normal text-xs"> (you)</span>}
                           </p>
                           <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                          {!connected && (
+                            <p className="text-[11px] text-amber-700 mt-0.5">
+                              Ignored by scheduler until Google Calendar is connected.
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -841,8 +880,8 @@ export default function MeetingDetail() {
                 <div className="flex gap-2">
                   {[
                     { value: 'morning', label: 'Morning' },
-                    { value: 'midday', label: 'Midday' },
                     { value: 'afternoon', label: 'Afternoon' },
+                    { value: 'evening', label: 'Evening' },
                   ].map(({ value, label }) => (
                     <button
                       key={value}

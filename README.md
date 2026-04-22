@@ -4,7 +4,7 @@ Chronos is a smart group meeting scheduler. It connects to each participant's Go
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
 

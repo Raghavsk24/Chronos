@@ -11,7 +11,7 @@ from firebase_functions import https_fn, scheduler_fn
 
 from scheduling.algorithm import find_meeting_slots
 
-MAX_WEEKS = 4
+SLOT_INTERVAL_MINUTES = 15
 REMINDER_TOLERANCE_MINUTES = 20
 
 
@@ -22,13 +22,9 @@ def _parse_iso_to_utc(iso_str: str) -> datetime:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
 
-# Must be initialized at module level so the callable framework can verify
-# Firebase ID tokens before our function code runs.
-if not firebase_admin._apps:
-    firebase_admin.initialize_app()
-
-
 def _get_db():
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app()
     return admin_firestore.client()
 
 
@@ -38,6 +34,59 @@ def _to_naive_utc(iso_str: str) -> str:
     if dt.tzinfo is not None:
         dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt.isoformat()
+
+
+def _timezone_for_name(timezone_name: str | None):
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    tz_name = (timezone_name or 'UTC').strip() or 'UTC'
+    if tz_name in {'UTC', 'Etc/UTC', 'GMT'}:
+        return timezone.utc, 'UTC'
+
+    try:
+        return ZoneInfo(tz_name), tz_name
+    except ZoneInfoNotFoundError:
+        return timezone.utc, 'UTC'
+
+
+def _utc_iso_to_timezone_iso(iso_str: str, timezone_name: str | None) -> tuple[str, str]:
+    utc_dt = _parse_iso_to_utc(iso_str)
+    tz, normalized_tz_name = _timezone_for_name(timezone_name)
+    local_dt = utc_dt.astimezone(tz)
+    return local_dt.isoformat(), normalized_tz_name
+
+
+def _round_up_to_interval(dt: datetime, minutes: int) -> datetime:
+    seconds_into_hour = dt.minute * 60 + dt.second
+    interval_seconds = minutes * 60
+    remainder = seconds_into_hour % interval_seconds
+    if remainder == 0 and dt.microsecond == 0:
+        return dt.replace(second=0, microsecond=0)
+
+    add_seconds = interval_seconds - remainder
+    if dt.microsecond:
+        add_seconds -= 1
+    rounded = dt + timedelta(seconds=add_seconds)
+    return rounded.replace(second=0, microsecond=0)
+
+
+def _add_one_month(dt: datetime) -> datetime:
+    year = dt.year
+    month = dt.month + 1
+    if month == 13:
+        month = 1
+        year += 1
+
+    if month == 2:
+        leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+        max_day = 29 if leap else 28
+    elif month in (4, 6, 9, 11):
+        max_day = 30
+    else:
+        max_day = 31
+
+    day = min(dt.day, max_day)
+    return dt.replace(year=year, month=month, day=day)
 
 
 def _refresh_access_token(refresh_token: str) -> str | None:
@@ -67,14 +116,14 @@ def _refresh_access_token(refresh_token: str) -> str | None:
         return None
 
 
-def _fetch_busy_slots(access_token: str, search_start: datetime) -> list[dict] | None:
+def _fetch_busy_slots(access_token: str, search_start: datetime, search_end: datetime) -> list[dict] | None:
     """Call the Google Calendar FreeBusy API for a user's primary calendar.
 
     Returns a list of {'start': str, 'end': str} dicts on success,
     or None if the token is expired / invalid.
     """
     time_min = search_start.replace(tzinfo=timezone.utc).isoformat()
-    time_max = (search_start + timedelta(weeks=MAX_WEEKS)).replace(tzinfo=timezone.utc).isoformat()
+    time_max = search_end.replace(tzinfo=timezone.utc).isoformat()
 
     payload = json.dumps({
         'timeMin': time_min,
@@ -140,7 +189,9 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         )
 
     client = _get_db()
-    search_start = datetime.utcnow()  # naive UTC, consistent with work-window conversion
+    now_utc = datetime.utcnow()
+    availability_start = _round_up_to_interval(now_utc + timedelta(hours=1), SLOT_INTERVAL_MINUTES)
+    availability_end = _add_one_month(now_utc)
 
     # --- 1. Fetch meeting ---
     meeting_doc = client.collection('meetings').document(meeting_id).get()
@@ -151,12 +202,16 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         )
 
     meeting = meeting_doc.to_dict()
-    member_uids: list[str] = meeting.get('memberUids', [])
+    member_uids: list[str] = meeting.get('memberUids') or []
+    member_records: list[dict] = meeting.get('members') or []
     meeting_duration: int = meeting.get('duration', 60)
     preferences: dict = meeting.get('preferences') or {}
 
+    if not member_uids and member_records:
+        member_uids = [m.get('uid') for m in member_records if m.get('uid')]
+
     if not member_uids:
-        return {'error': 'Meeting has no members.'}
+        return {'error': 'Meeting has no participants.'}
 
     # --- 2. Fetch each member's settings and calendar busy slots ---
     busy_slots_by_participant: dict = {}
@@ -165,6 +220,8 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     work_days_by_participant: dict = {}
     included_members: list[str] = []
     ignored_members: list[str] = []
+
+    allowed_uids = set(member_uids)
 
     for uid in member_uids:
         user_doc = client.collection('users').document(uid).get()
@@ -190,7 +247,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
             ignored_members.append(display_name)
             continue
 
-        busy = _fetch_busy_slots(access_token, search_start)
+        busy = _fetch_busy_slots(access_token, availability_start, availability_end)
 
         # Token expired — try refreshing once.
         if busy is None and refresh_token:
@@ -200,7 +257,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
                     'googleAccessToken': new_token,
                     'tokenUpdatedAt': datetime.now(timezone.utc),
                 })
-                busy = _fetch_busy_slots(new_token, search_start)
+                busy = _fetch_busy_slots(new_token, availability_start, availability_end)
 
         if busy is None:
             ignored_members.append(display_name)
@@ -241,14 +298,18 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         bc = len(busy_slots_by_participant.get(uid, []))
         print(f'DEBUG [{uid}] timezone={wh.get("timezone")} hours={wh["start_hour"]}:{wh["start_minute"]:02d}-{wh["end_hour"]}:{wh["end_minute"]:02d} work_days={wd} busy_slots={bc}')
     print(f'DEBUG preferences: {preferences}')
+    # Keep only participants that are in this meeting and have valid settings + connected calendars.
+    filtered_busy = {uid: slots for uid, slots in busy_slots_by_participant.items() if uid in allowed_uids}
+    filtered_work_hours = {uid: wh for uid, wh in work_hours_by_participant.items() if uid in allowed_uids}
+    filtered_work_days = {uid: wd for uid, wd in work_days_by_participant.items() if uid in allowed_uids}
+
     result = find_meeting_slots(
-        busy_slots_by_participant=busy_slots_by_participant,
+        busy_slots_by_participant=filtered_busy,
         buffer_by_participant=buffer_by_participant,
-        work_hours_by_participant=work_hours_by_participant,
-        work_days_by_participant=work_days_by_participant,
+        work_hours_by_participant=filtered_work_hours,
+        work_days_by_participant=filtered_work_days,
         meeting_duration_minutes=meeting_duration,
-        search_start=search_start,
-        max_weeks=MAX_WEEKS,
+        search_start=now_utc,
         preferences=preferences,
     )
 
@@ -268,6 +329,12 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     return result
 
 
+@https_fn.on_call()
+def schedule_meetings(req: https_fn.CallableRequest) -> dict:
+    """Compatibility alias that keeps the legacy plural callable name available."""
+    return schedule_meeting(req)
+
+
 def _create_calendar_event(
     access_token: str,
     summary: str,
@@ -275,10 +342,11 @@ def _create_calendar_event(
     end_iso: str,
     attendee_emails: list[str],
     meeting_link: str = '',
+    time_zone: str = 'UTC',
 ) -> str:
     """Create a Google Calendar event. Returns the event ID on success, '' on failure."""
-    start_dt = start_iso if start_iso.endswith('Z') else f'{start_iso}Z'
-    end_dt = end_iso if end_iso.endswith('Z') else f'{end_iso}Z'
+    start_dt, normalized_time_zone = _utc_iso_to_timezone_iso(start_iso, time_zone)
+    end_dt, _ = _utc_iso_to_timezone_iso(end_iso, time_zone)
 
     description_lines = [summary]
     if meeting_link:
@@ -286,8 +354,8 @@ def _create_calendar_event(
 
     payload_dict = {
         'summary': summary,
-        'start': {'dateTime': start_dt, 'timeZone': 'UTC'},
-        'end':   {'dateTime': end_dt,   'timeZone': 'UTC'},
+        'start': {'dateTime': start_dt, 'timeZone': normalized_time_zone},
+        'end':   {'dateTime': end_dt,   'timeZone': normalized_time_zone},
         'attendees': [{'email': e} for e in attendee_emails],
         'description': '\n'.join(description_lines),
     }
@@ -513,7 +581,7 @@ def _build_booking_confirmation_html(
     slot_end: datetime,
     meeting_link: str = '',
 ) -> str:
-    start_label = slot_start.strftime('%A, %B %-d, %Y at %H:%M UTC')
+    start_label = slot_start.strftime('%A, %B ') + str(slot_start.day) + slot_start.strftime(', %Y at %H:%M UTC')
     end_label = slot_end.strftime('%H:%M UTC')
     join_html = (
         f'<p><strong>Join link:</strong> <a href="{meeting_link}">{meeting_link}</a></p>'
@@ -571,8 +639,9 @@ def _book_meeting_impl(
     meeting_link = (meeting.get('meetingLink') or '').strip()
     host_uid: str = meeting.get('hostUid', '')
 
-    # Collect each member's email and (refreshed) access token in one pass.
+    # Collect each member's email and refreshed access token in one pass.
     member_data: list[dict] = []
+    missing_calendar_members: list[str] = []
     for uid in member_uids:
         user_doc = db_client.collection('users').document(uid).get()
         if not user_doc.exists:
@@ -581,6 +650,8 @@ def _book_meeting_impl(
         email: str = (udata.get('email') or '').strip()
         access_token: str = udata.get('googleAccessToken', '')
         refresh_token: str = udata.get('googleRefreshToken', '')
+        display_name: str = (udata.get('displayName') or '').strip() or uid
+        user_timezone: str = (udata.get('settings') or {}).get('timezone') or 'UTC'
 
         if refresh_token:
             new_token = _refresh_access_token(refresh_token)
@@ -591,7 +662,25 @@ def _book_meeting_impl(
                     'tokenUpdatedAt': datetime.now(timezone.utc),
                 })
 
-        member_data.append({'uid': uid, 'email': email, 'token': access_token})
+        if not access_token:
+            missing_calendar_members.append(display_name)
+
+        member_data.append({
+            'uid': uid,
+            'email': email,
+            'token': access_token,
+            'name': display_name,
+            'timezone': user_timezone,
+        })
+
+    if missing_calendar_members:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
+            message=(
+                'Every meeting participant must connect Google Calendar before booking. '
+                'Missing calendar connection: ' + ', '.join(missing_calendar_members)
+            ),
+        )
 
     attendee_emails = [m['email'] for m in member_data if m['email']]
     host_entry = next((m for m in member_data if m['uid'] == host_uid), None)
@@ -617,6 +706,7 @@ def _book_meeting_impl(
         slot_end,
         attendee_emails,
         meeting_link,
+        host_entry.get('timezone', 'UTC') if host_entry else 'UTC',
     )
     if not host_event_id:
         raise https_fn.HttpsError(
@@ -624,24 +714,37 @@ def _book_meeting_impl(
             message='Failed to create calendar invite event. Meeting was not booked.',
         )
 
-    # Also add the event directly to each participant's own calendar so it
-    # appears immediately without requiring them to accept an invite.
+    # Also add the event directly to each participant's own calendar.
     # Store each event ID so we can delete them later on reschedule/cancel.
     calendar_event_ids: dict[str, str] = {host_uid: host_event_id}
+    created_event_member_ids: list[str] = [host_uid]
     for member in member_data:
         if member['uid'] == host_uid:
             continue
-        if member['token']:
-            eid = create_event_fn(
-                member['token'],
-                summary,
-                slot_start,
-                slot_end,
-                attendee_emails,
-                meeting_link,
+        eid = create_event_fn(
+            member['token'],
+            summary,
+            slot_start,
+            slot_end,
+            attendee_emails,
+            meeting_link,
+            member.get('timezone', 'UTC'),
+        )
+        if not eid:
+            for cleanup_uid in created_event_member_ids:
+                cleanup_token = next(
+                    (m['token'] for m in member_data if m['uid'] == cleanup_uid),
+                    '',
+                )
+                cleanup_event_id = calendar_event_ids.get(cleanup_uid, '')
+                if cleanup_token and cleanup_event_id:
+                    _delete_calendar_event(cleanup_token, cleanup_event_id)
+            raise https_fn.HttpsError(
+                code=https_fn.FunctionsErrorCode.INTERNAL,
+                message='Failed to add meeting event to all participant calendars. Meeting was not booked.',
             )
-            if eid:
-                calendar_event_ids[member['uid']] = eid
+        calendar_event_ids[member['uid']] = eid
+        created_event_member_ids.append(member['uid'])
 
     # Persist the booking in Firestore.
     db_client.collection('meetings').document(meeting_id).update({
@@ -675,6 +778,12 @@ def book_meeting(req: https_fn.CallableRequest) -> dict:
         data=req.data,
         auth_uid=req.auth.uid if req.auth else None,
     )
+
+
+@https_fn.on_call()
+def book_meetings(req: https_fn.CallableRequest) -> dict:
+    """Compatibility alias that keeps the legacy plural callable name available."""
+    return book_meeting(req)
 
 
 @https_fn.on_call()
