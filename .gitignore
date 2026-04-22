@@ -1,4 +1,4 @@
-# Environment files with secrets — never commit these
+# Environment files with secrets - never commit these
 functions/.env
 .env.local
 

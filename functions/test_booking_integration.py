@@ -117,7 +117,7 @@ def test_create_calendar_event_returns_event_id_on_200(monkeypatch):
 def test_create_calendar_event_returns_empty_string_on_401(monkeypatch):
     def _raise_401(*args, **kwargs):
         raise urllib.error.HTTPError(
-            url="https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all",
+            url="https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none",
             code=401,
             msg="Unauthorized",
             hdrs=None,
@@ -153,7 +153,7 @@ def test_book_meeting_impl_updates_status_on_success():
     )
 
     assert result["success"] is True
-    assert result["attendeeCount"] == 2
+    assert result["attendeeCount"] == 1
     meeting = db._seed["meetings"]["m1"]
     assert meeting["status"] == "scheduled"
     assert meeting["scheduledSlot"]["start"] == "2026-05-01T10:00:00"
@@ -182,7 +182,12 @@ def test_book_meeting_impl_passes_meeting_link_to_calendar_event():
     captured = []
 
     def _fake_create_event(token, summary, slot_start, slot_end, attendee_emails, meeting_link, time_zone='UTC'):
-        captured.append({"meeting_link": meeting_link, "time_zone": time_zone, "token": token})
+        captured.append({
+            "meeting_link": meeting_link,
+            "time_zone": time_zone,
+            "token": token,
+            "attendee_emails": attendee_emails,
+        })
         return "event-id"
 
     main._book_meeting_impl(
@@ -199,6 +204,34 @@ def test_book_meeting_impl_passes_meeting_link_to_calendar_event():
     assert captured[0]["meeting_link"] == "https://meet.google.com/abc-defg-hij"
     assert captured[0]["time_zone"] == "America/New_York"
     assert captured[1]["time_zone"] == "Europe/London"
+    assert captured[0]["attendee_emails"] == []
+    assert captured[1]["attendee_emails"] == []
+
+
+def test_book_meeting_impl_emails_participants_only(monkeypatch):
+    db = _seed_db()
+    sent = []
+
+    def _fake_send_resend_email(to_email, subject, html, reply_to=None):
+        sent.append({"to": to_email, "subject": subject, "reply_to": reply_to})
+        return True
+
+    monkeypatch.setattr(main, "_send_resend_email", _fake_send_resend_email)
+
+    main._book_meeting_impl(
+        data={
+            "meetingId": "m1",
+            "slotStart": "2026-05-01T10:00:00",
+            "slotEnd": "2026-05-01T11:00:00",
+        },
+        auth_uid="host-uid",
+        client=db,
+        create_event_fn=lambda *args, **kwargs: "event-id",
+    )
+
+    assert len(sent) == 1
+    assert sent[0]["to"] == "member@example.com"
+    assert sent[0]["reply_to"] == "host@example.com"
 
 
 def test_create_calendar_event_localizes_to_participant_timezone(monkeypatch):
