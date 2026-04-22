@@ -6,7 +6,7 @@ import {
   GoogleAuthProvider,
   getIdTokenResult,
   reauthenticateWithCredential,
-  reauthenticateWithPopup,
+  signInWithPopup,
   updatePassword,
 } from 'firebase/auth'
 import { RefreshCcw } from 'lucide-react'
@@ -79,8 +79,6 @@ function buildTime(hour: string, minute: string, period: string): string {
 
 const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'))
 const MINUTES = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'))
-const SENSITIVE_REAUTH_MAX_AGE_MINUTES = 30
-
 interface PersistedSettingsSnapshot {
   bufferMinutes: number
   workStart: string
@@ -182,13 +180,10 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [syncingCalendar, setSyncingCalendar] = useState(false)
   const [disconnectingCalendar, setDisconnectingCalendar] = useState(false)
-  const [reauthenticating, setReauthenticating] = useState(false)
-  const [reauthPassword, setReauthPassword] = useState('')
-  const [requiresRecentReauth, setRequiresRecentReauth] = useState(false)
 
   const [lastSignInLabel, setLastSignInLabel] = useState('Unknown')
   const [providerUsedLabel, setProviderUsedLabel] = useState('Unknown')
-  const [linkedProviderIds, setLinkedProviderIds] = useState<string[]>([])
+  const [, setLinkedProviderIds] = useState<string[]>([])
 
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -217,7 +212,6 @@ export default function Settings() {
       setLastSignInLabel('Unknown')
       setProviderUsedLabel('Unknown')
       setLinkedProviderIds([])
-      setRequiresRecentReauth(false)
       return
     }
 
@@ -228,11 +222,8 @@ export default function Settings() {
     const lastSignInDate = lastSignInRaw ? new Date(lastSignInRaw) : null
     if (lastSignInDate && !Number.isNaN(lastSignInDate.getTime())) {
       setLastSignInLabel(lastSignInDate.toLocaleString())
-      const ageMs = Date.now() - lastSignInDate.getTime()
-      setRequiresRecentReauth(ageMs > SENSITIVE_REAUTH_MAX_AGE_MINUTES * 60 * 1000)
     } else {
       setLastSignInLabel('Unknown')
-      setRequiresRecentReauth(true)
     }
 
     try {
@@ -262,7 +253,7 @@ export default function Settings() {
         setNotifyMeetingCreated(s.notifyMeetingCreated ?? true)
         setNotifyMeetingChanged(s.notifyMeetingChanged ?? true)
         setNotifyMeetingCancelled(s.notifyMeetingCancelled ?? true)
-        setGoogleCalendarConnected(Boolean(data.googleAccessToken))
+        setGoogleCalendarConnected(Boolean(data.googleAccessToken || data.googleRefreshToken))
 
         persistedSettingsRef.current = {
           bufferMinutes: s.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes,
@@ -376,49 +367,15 @@ export default function Settings() {
     }
   }
 
-  const handleReauthenticate = async () => {
-    if (!auth.currentUser || !user) return
-    setReauthenticating(true)
-
-    try {
-      const hasGoogle = linkedProviderIds.includes('google.com')
-      const hasPassword = linkedProviderIds.includes('password')
-
-      if (!hasGoogle && hasPassword) {
-        if (!user.email) {
-          toast.error('No email found for this account.')
-          return
-        }
-        if (!reauthPassword) {
-          toast.error('Enter your current password to re-authenticate.')
-          return
-        }
-        const credential = EmailAuthProvider.credential(user.email, reauthPassword)
-        await reauthenticateWithCredential(auth.currentUser, credential)
-        setReauthPassword('')
-      } else {
-        await reauthenticateWithPopup(auth.currentUser, googleProvider)
-      }
-
-      await refreshAccountActivity()
-      setRequiresRecentReauth(false)
-      toast.success('Re-authentication complete.')
-    } catch {
-      toast.error('Re-authentication failed. Please try again.')
-    } finally {
-      setReauthenticating(false)
-    }
-  }
-
   const handleReconnectCalendar = async () => {
-    if (!user || !auth.currentUser) return
+    if (!user) return
     setSyncingCalendar(true)
     try {
-      const result = await reauthenticateWithPopup(auth.currentUser, googleProvider)
+      const result = await signInWithPopup(auth, googleProvider)
       const popupEmail = result.user.email?.toLowerCase()
       const accountEmail = user.email?.toLowerCase()
       if (popupEmail && accountEmail && popupEmail !== accountEmail) {
-        toast.error('Use the Google account that matches your login email/password account.')
+        toast.error('Use the Google account that matches your Chronos account.')
         return
       }
       const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken
@@ -426,11 +383,18 @@ export default function Settings() {
         toast.error('Unable to get Google Calendar access. Please try again.')
         return
       }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokenResponse = (result as any)._tokenResponse
+      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
+      const expiresIn = parseInt(tokenResponse?.expiresIn ?? '3600', 10)
+      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000)
 
       await setDoc(
         doc(db, 'users', user.uid),
         {
           googleAccessToken: accessToken,
+          tokenExpiresAt,
+          ...(refreshToken ? { googleRefreshToken: refreshToken } : {}),
           tokenUpdatedAt: new Date(),
         },
         { merge: true }
@@ -446,17 +410,15 @@ export default function Settings() {
 
   const handleDisconnectCalendar = async () => {
     if (!user) return
-    if (requiresRecentReauth) {
-      toast.error('Re-authentication is required before disconnecting Google Calendar.')
-      return
-    }
     setDisconnectingCalendar(true)
     try {
       await setDoc(
         doc(db, 'users', user.uid),
         {
           googleAccessToken: deleteField(),
+          googleRefreshToken: deleteField(),
           tokenUpdatedAt: deleteField(),
+          tokenExpiresAt: deleteField(),
         },
         { merge: true }
       )
@@ -507,10 +469,6 @@ export default function Settings() {
 
   const handleDeleteAccount = async () => {
     if (!user || !auth.currentUser) return
-    if (requiresRecentReauth) {
-      toast.error('Re-authentication is required before deleting your account.')
-      return
-    }
     setDeleting(true)
     try {
       await deleteDoc(doc(db, 'users', user.uid))
@@ -637,28 +595,6 @@ export default function Settings() {
               description="Manage your account and data."
             >
             <div className="border rounded-xl p-4 flex flex-col gap-4">
-              {requiresRecentReauth && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex flex-col gap-2">
-                  <p className="text-sm font-medium text-amber-900">Re-authentication required for sensitive actions</p>
-                  <p className="text-xs text-amber-800">
-                    Your session is older than {SENSITIVE_REAUTH_MAX_AGE_MINUTES} minutes. Re-authenticate to disconnect Google Calendar or delete your account.
-                  </p>
-                  {linkedProviderIds.includes('password') && !linkedProviderIds.includes('google.com') && (
-                    <Input
-                      type="password"
-                      placeholder="Current password"
-                      value={reauthPassword}
-                      onChange={(e) => setReauthPassword(e.target.value)}
-                    />
-                  )}
-                  <div>
-                    <Button size="sm" variant="outline" onClick={handleReauthenticate} disabled={reauthenticating}>
-                      {reauthenticating ? 'Re-authenticating...' : 'Re-authenticate'}
-                    </Button>
-                  </div>
-                </div>
-              )}
-
               <div className="border rounded-lg p-3 flex flex-col gap-1.5">
                 <p className="text-sm font-medium">Account activity</p>
                 <p className="text-xs text-muted-foreground">Last sign in: {lastSignInLabel}</p>
@@ -678,7 +614,6 @@ export default function Settings() {
                     size="sm"
                     className="border-destructive text-destructive hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => setShowDisconnectCalendarConfirm(true)}
-                    disabled={requiresRecentReauth}
                   >
                     Disconnect
                   </Button>
@@ -844,7 +779,6 @@ export default function Settings() {
                 size="sm"
                 className="shrink-0"
                 onClick={() => setShowDeleteConfirm(true)}
-                disabled={requiresRecentReauth}
               >
                 Delete
               </Button>

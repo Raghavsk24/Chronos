@@ -1,4 +1,4 @@
-export type MeetingStatus = 'scheduling' | 'scheduled' | 'completed'
+export type MeetingStatus = 'scheduling' | 'scheduled' | 'completed' | 'declined'
 
 export function meetingStatusConfig(status: MeetingStatus | string): { label: string; className: string } {
   switch (status) {
@@ -20,6 +20,12 @@ export function meetingStatusConfig(status: MeetingStatus | string): { label: st
         className:
           'border [background-color:var(--status-completed-bg)] [color:var(--status-completed-fg)] [border-color:var(--status-completed-border)]',
       }
+    case 'declined':
+      return {
+        label: 'Declined',
+        className:
+          'border [background-color:var(--status-declined-bg)] [color:var(--status-declined-fg)] [border-color:var(--status-declined-border)]',
+      }
     default:
       return { label: status, className: 'bg-muted text-muted-foreground' }
   }
@@ -28,6 +34,12 @@ export function meetingStatusConfig(status: MeetingStatus | string): { label: st
 export function utcToLocal(isoUtc: string, tz: string, opts: Intl.DateTimeFormatOptions): string {
   const d = new Date(isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z')
   return new Intl.DateTimeFormat('en-US', { timeZone: tz, ...opts }).format(d)
+}
+
+export function slotDateISO(isoUtc: string, tz: string): string {
+  const d = new Date(isoUtc.endsWith('Z') ? isoUtc : isoUtc + 'Z')
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
+  return formatter.format(d).replace(/\//g, '-')
 }
 
 export function slotDate(isoUtc: string, tz: string) {

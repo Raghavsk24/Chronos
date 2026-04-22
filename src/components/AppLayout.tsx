@@ -1,13 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { signOut } from 'firebase/auth'
+import { signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { ChevronDown, LogOut } from 'lucide-react'
-import { auth } from '@/lib/firebase'
+import { auth, db, googleProvider } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import UserProfilePanel from '@/components/UserProfilePanel'
 import Avatar from '@/components/Avatar'
 import { Link } from 'react-router-dom'
 import ChronosLogo from '@/components/ChronosLogo'
+import { Button } from '@/components/ui/button'
 
 const navItems = [
   { to: '/app/dashboard', label: 'Dashboard' },
@@ -25,6 +27,67 @@ export default function AppLayout() {
   const user = useAuthStore((state) => state.user)
   const navigate = useNavigate()
   const [profileOpen, setProfileOpen] = useState(false)
+  const [calendarExpired, setCalendarExpired] = useState(false)
+  const [reconnecting, setReconnecting] = useState(false)
+
+  useEffect(() => {
+    if (!user?.uid) return
+    let cancelled = false
+
+    getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      if (cancelled || !snap.exists()) return
+      const data = snap.data()
+      const hasRefreshToken = Boolean(data.googleRefreshToken)
+      if (!hasRefreshToken) return // never connected calendar — no banner needed
+
+      const tokenExpiresAt = data.tokenExpiresAt
+      if (!tokenExpiresAt) return // no expiry recorded — assume valid
+
+      const expiresMs: number =
+        typeof tokenExpiresAt.toDate === 'function'
+          ? tokenExpiresAt.toDate().getTime()
+          : tokenExpiresAt instanceof Date
+            ? tokenExpiresAt.getTime()
+            : typeof tokenExpiresAt.seconds === 'number'
+              ? tokenExpiresAt.seconds * 1000
+              : 0
+
+      if (expiresMs > 0 && expiresMs < Date.now()) {
+        setCalendarExpired(true)
+      }
+    })
+
+    return () => { cancelled = true }
+  }, [user?.uid])
+
+  const handleReconnect = async () => {
+    if (!user) return
+    setReconnecting(true)
+    try {
+      const result = await signInWithPopup(auth, googleProvider)
+      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokenResponse = (result as any)._tokenResponse
+      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
+      const expiresIn = parseInt(tokenResponse?.expiresIn ?? '3600', 10)
+      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000)
+
+      if (!accessToken) return
+
+      await setDoc(doc(db, 'users', user.uid), {
+        googleAccessToken: accessToken,
+        tokenExpiresAt,
+        tokenUpdatedAt: new Date(),
+        ...(refreshToken ? { googleRefreshToken: refreshToken } : {}),
+      }, { merge: true })
+
+      setCalendarExpired(false)
+    } catch {
+      // silently fail — user can try again from Settings
+    } finally {
+      setReconnecting(false)
+    }
+  }
 
   const handleSignOut = async () => {
     await signOut(auth)
@@ -65,6 +128,23 @@ export default function AppLayout() {
             Sign out
           </button>
         </nav>
+
+        {calendarExpired && (
+          <div className="border-t border-amber-200 bg-amber-50 px-4 py-2 flex items-center justify-between gap-4">
+            <p className="text-xs text-amber-800">
+              Your Google Calendar connection has expired. Reconnect so the scheduling algorithm can read your availability.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0 border-amber-300 text-amber-900 hover:bg-amber-100"
+              onClick={handleReconnect}
+              disabled={reconnecting}
+            >
+              {reconnecting ? 'Reconnecting...' : 'Reconnect Calendar'}
+            </Button>
+          </div>
+        )}
       </header>
 
       <div className="flex flex-1 overflow-hidden">

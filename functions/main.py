@@ -6,13 +6,25 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import firebase_admin
+import sentry_sdk
 from firebase_admin import firestore as admin_firestore
 from firebase_functions import https_fn, scheduler_fn
 
 from scheduling.algorithm import find_meeting_slots
 
+_sentry_dsn = os.environ.get('SENTRY_DSN', '')
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        traces_sample_rate=0.1,
+        environment=os.environ.get('SENTRY_ENVIRONMENT', 'production'),
+    )
+
 SLOT_INTERVAL_MINUTES = 15
 REMINDER_TOLERANCE_MINUTES = 20
+
+if not firebase_admin._apps:
+    firebase_admin.initialize_app()
 
 
 def _parse_iso_to_utc(iso_str: str) -> datetime:
@@ -89,8 +101,11 @@ def _add_one_month(dt: datetime) -> datetime:
     return dt.replace(year=year, month=month, day=day)
 
 
-def _refresh_access_token(refresh_token: str) -> str | None:
-    """Exchange a Google OAuth refresh token for a new access token."""
+def _refresh_access_token(refresh_token: str) -> tuple[str, int] | None:
+    """Exchange a Google OAuth refresh token for a new access token.
+
+    Returns (access_token, expires_in_seconds) or None on failure.
+    """
     client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
     client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
     if not client_id or not client_secret or not refresh_token:
@@ -111,9 +126,55 @@ def _refresh_access_token(refresh_token: str) -> str | None:
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read()).get('access_token')
+            data = json.loads(resp.read())
+            token = data.get('access_token')
+            if not token:
+                return None
+            return (token, int(data.get('expires_in', 3600)))
     except Exception:
         return None
+
+
+def _resolve_access_token(
+    client,
+    uid: str,
+    access_token: str,
+    refresh_token: str,
+    token_expires_at=None,
+) -> str:
+    """Return a fresh access token, refreshing proactively when near expiry.
+
+    Skips the network call entirely when the stored token has more than 5 minutes
+    of remaining validity. Falls back to the existing token if the refresh request
+    fails (e.g. transient network error) so callers can still attempt the API call.
+    """
+    if not refresh_token:
+        return access_token
+
+    # Skip the refresh network call if the token is comfortably valid (>5 min left).
+    if access_token and token_expires_at is not None:
+        now = datetime.now(timezone.utc)
+        expires = token_expires_at
+        if getattr(expires, 'tzinfo', None) is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if (expires - now).total_seconds() > 300:
+            return access_token
+
+    result = _refresh_access_token(refresh_token)
+    if not result:
+        return access_token
+
+    new_token, expires_in = result
+    new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+    if new_token != access_token:
+        client.collection('users').document(uid).update({
+            'googleAccessToken': new_token,
+            'tokenExpiresAt': new_expires_at,
+            'tokenUpdatedAt': datetime.now(timezone.utc),
+        })
+
+    return new_token
 
 
 def _fetch_busy_slots(access_token: str, search_start: datetime, search_end: datetime) -> list[dict] | None:
@@ -232,16 +293,10 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         settings: dict = user_data.get('settings', {})
         access_token: str = user_data.get('googleAccessToken', '')
         refresh_token: str = user_data.get('googleRefreshToken', '')
+        token_expires_at = user_data.get('tokenExpiresAt')
         display_name = user_data.get('displayName', uid)
 
-        # If no access token but we have a refresh token, get a fresh one immediately.
-        if not access_token and refresh_token:
-            access_token = _refresh_access_token(refresh_token) or ''
-            if access_token:
-                client.collection('users').document(uid).update({
-                    'googleAccessToken': access_token,
-                    'tokenUpdatedAt': datetime.now(timezone.utc),
-                })
+        access_token = _resolve_access_token(client, uid, access_token, refresh_token, token_expires_at)
 
         if not access_token:
             ignored_members.append(display_name)
@@ -249,12 +304,15 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
 
         busy = _fetch_busy_slots(access_token, availability_start, availability_end)
 
-        # Token expired — try refreshing once.
+        # Token was rejected despite proactive refresh — one last forced retry.
         if busy is None and refresh_token:
-            new_token = _refresh_access_token(refresh_token)
-            if new_token:
+            retry = _refresh_access_token(refresh_token)
+            if retry:
+                new_token, expires_in = retry
+                new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
                 client.collection('users').document(uid).update({
                     'googleAccessToken': new_token,
+                    'tokenExpiresAt': new_expires_at,
                     'tokenUpdatedAt': datetime.now(timezone.utc),
                 })
                 busy = _fetch_busy_slots(new_token, availability_start, availability_end)
@@ -278,8 +336,8 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
     if not work_days_by_participant:
         return {
             'error': (
-                'No participants have Google Calendar connected. '
-                'Connect Google Calendar in account settings to run scheduling.'
+                'No participant calendars are currently accessible. '
+                'Reconnect Google Calendar in account settings to run scheduling.'
             ),
             'coverage': {
                 'includedCount': 0,
@@ -315,7 +373,7 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
 
     if ignored_members and 'error' not in result:
         result['warning'] = (
-            'Some participants were ignored because Google Calendar is not connected: '
+            'Some participants were ignored because their calendar could not be accessed: '
             + ', '.join(ignored_members)
         )
 
@@ -356,16 +414,17 @@ def _create_calendar_event(
         'summary': summary,
         'start': {'dateTime': start_dt, 'timeZone': normalized_time_zone},
         'end':   {'dateTime': end_dt,   'timeZone': normalized_time_zone},
-        'attendees': [{'email': e} for e in attendee_emails],
         'description': '\n'.join(description_lines),
     }
+    if attendee_emails:
+        payload_dict['attendees'] = [{'email': e} for e in attendee_emails]
     if meeting_link:
         payload_dict['location'] = meeting_link
 
     payload = json.dumps(payload_dict).encode('utf-8')
 
     req = urllib.request.Request(
-        'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=all',
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=none',
         data=payload,
         headers={
             'Authorization': f'Bearer {access_token}',
@@ -409,7 +468,14 @@ def _delete_calendar_event(access_token: str, event_id: str) -> bool:
         return False
 
 
-def _send_resend_email(to_email: str, subject: str, html: str) -> bool:
+        return False
+
+    except Exception as e:
+        print(f'Calendar event deletion failed: {e}')
+        return False
+
+
+def _send_resend_email(to_email: str, subject: str, html: str, reply_to: str | None = None) -> bool:
     """Send an email via Resend API. Returns False when delivery is unavailable/fails."""
     api_key = os.environ.get('RESEND_API_KEY', '').strip()
     from_email = os.environ.get('REMINDER_FROM_EMAIL', '').strip()
@@ -417,12 +483,16 @@ def _send_resend_email(to_email: str, subject: str, html: str) -> bool:
     if not api_key or not from_email:
         return False
 
-    payload = json.dumps({
+    payload_dict = {
         'from': from_email,
         'to': [to_email],
         'subject': subject,
         'html': html,
-    }).encode('utf-8')
+    }
+    if reply_to:
+        payload_dict['reply_to'] = [reply_to]
+
+    payload = json.dumps(payload_dict).encode('utf-8')
 
     req = urllib.request.Request(
         'https://api.resend.com/emails',
@@ -580,6 +650,8 @@ def _build_booking_confirmation_html(
     slot_start: datetime,
     slot_end: datetime,
     meeting_link: str = '',
+    participant_names: list[str] | None = None,
+    role: str = 'participant',
 ) -> str:
     start_label = slot_start.strftime('%A, %B ') + str(slot_start.day) + slot_start.strftime(', %Y at %H:%M UTC')
     end_label = slot_end.strftime('%H:%M UTC')
@@ -587,9 +659,18 @@ def _build_booking_confirmation_html(
         f'<p><strong>Join link:</strong> <a href="{meeting_link}">{meeting_link}</a></p>'
         if meeting_link else ''
     )
+    if role == 'host':
+        intro = f'<p>You have booked <strong>{meeting_name}</strong>. Invites have been sent to all participants.</p>'
+    else:
+        intro = f"<p>You've been invited to <strong>{meeting_name}</strong>.</p>"
+    participants_html = ''
+    if participant_names:
+        names_li = ''.join(f'<li>{name}</li>' for name in participant_names)
+        participants_html = f'<p><strong>Participants:</strong></p><ul>{names_li}</ul>'
     return (
-        f'<p>Your meeting <strong>{meeting_name}</strong> has been booked.</p>'
+        f'{intro}'
         f'<p><strong>When:</strong> {start_label} – {end_label}</p>'
+        f'{participants_html}'
         f'{join_html}'
         '<p>You will receive reminders 24 hours and 1 hour before the meeting.</p>'
     )
@@ -650,17 +731,11 @@ def _book_meeting_impl(
         email: str = (udata.get('email') or '').strip()
         access_token: str = udata.get('googleAccessToken', '')
         refresh_token: str = udata.get('googleRefreshToken', '')
+        token_expires_at = udata.get('tokenExpiresAt')
         display_name: str = (udata.get('displayName') or '').strip() or uid
         user_timezone: str = (udata.get('settings') or {}).get('timezone') or 'UTC'
 
-        if refresh_token:
-            new_token = _refresh_access_token(refresh_token)
-            if new_token:
-                access_token = new_token
-                db_client.collection('users').document(uid).update({
-                    'googleAccessToken': access_token,
-                    'tokenUpdatedAt': datetime.now(timezone.utc),
-                })
+        access_token = _resolve_access_token(db_client, uid, access_token, refresh_token, token_expires_at)
 
         if not access_token:
             missing_calendar_members.append(display_name)
@@ -669,22 +744,17 @@ def _book_meeting_impl(
             'uid': uid,
             'email': email,
             'token': access_token,
+            'refresh_token': refresh_token,
             'name': display_name,
             'timezone': user_timezone,
         })
 
     if missing_calendar_members:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
-            message=(
-                'Every meeting participant must connect Google Calendar before booking. '
-                'Missing calendar connection: ' + ', '.join(missing_calendar_members)
-            ),
-        )
+        print(f'Participants without calendar access (will be skipped): {", ".join(missing_calendar_members)}')
 
-    attendee_emails = [m['email'] for m in member_data if m['email']]
     host_entry = next((m for m in member_data if m['uid'] == host_uid), None)
     host_token = host_entry['token'] if host_entry else ''
+    host_email = (host_entry.get('email') or '').strip() if host_entry else ''
 
     if not host_token:
         raise https_fn.HttpsError(
@@ -692,19 +762,14 @@ def _book_meeting_impl(
             message='Host must connect Google Calendar before booking a meeting.',
         )
 
-    if not attendee_emails:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.FAILED_PRECONDITION,
-            message='No attendee emails are available for this meeting.',
-        )
-
-    # Create the organiser event on the host's calendar (sends Google invites).
+    # Create the host event without Google attendee emails.
+    # Chronos sends the booking confirmation email instead.
     host_event_id = create_event_fn(
         host_token,
         summary,
         slot_start,
         slot_end,
-        attendee_emails,
+        [],
         meeting_link,
         host_entry.get('timezone', 'UTC') if host_entry else 'UTC',
     )
@@ -717,34 +782,31 @@ def _book_meeting_impl(
     # Also add the event directly to each participant's own calendar.
     # Store each event ID so we can delete them later on reschedule/cancel.
     calendar_event_ids: dict[str, str] = {host_uid: host_event_id}
-    created_event_member_ids: list[str] = [host_uid]
+    ignored_participants: list[str] = []
     for member in member_data:
         if member['uid'] == host_uid:
             continue
-        eid = create_event_fn(
-            member['token'],
-            summary,
-            slot_start,
-            slot_end,
-            attendee_emails,
-            meeting_link,
-            member.get('timezone', 'UTC'),
-        )
+        token = member['token']
+        if not token:
+            ignored_participants.append(member['name'])
+            continue
+        eid = create_event_fn(token, summary, slot_start, slot_end, [], meeting_link, member.get('timezone', 'UTC'))
         if not eid:
-            for cleanup_uid in created_event_member_ids:
-                cleanup_token = next(
-                    (m['token'] for m in member_data if m['uid'] == cleanup_uid),
-                    '',
-                )
-                cleanup_event_id = calendar_event_ids.get(cleanup_uid, '')
-                if cleanup_token and cleanup_event_id:
-                    _delete_calendar_event(cleanup_token, cleanup_event_id)
-            raise https_fn.HttpsError(
-                code=https_fn.FunctionsErrorCode.INTERNAL,
-                message='Failed to add meeting event to all participant calendars. Meeting was not booked.',
-            )
+            # One retry with a fresh token before giving up.
+            fresh = _refresh_access_token(member.get('refresh_token', ''))
+            if fresh:
+                new_token, _ = fresh
+                eid = create_event_fn(new_token, summary, slot_start, slot_end, [], meeting_link, member.get('timezone', 'UTC'))
+                if eid:
+                    db_client.collection('users').document(member['uid']).update({'googleAccessToken': new_token})
+        if not eid:
+            ignored_participants.append(member['name'])
+            print(f'Skipping calendar event for participant {member["name"]}: event creation failed.')
+            continue
         calendar_event_ids[member['uid']] = eid
-        created_event_member_ids.append(member['uid'])
+
+    if ignored_participants:
+        print(f'Calendar event skipped for {len(ignored_participants)} participant(s): {", ".join(ignored_participants)}')
 
     # Persist the booking in Firestore.
     db_client.collection('meetings').document(meeting_id).update({
@@ -754,21 +816,39 @@ def _book_meeting_impl(
         'calendarEventIds': calendar_event_ids,
     })
 
-    # Send booking confirmation emails to all participants.
+    # Send booking confirmation to host and invite emails to all participants.
     try:
         slot_start_dt = datetime.fromisoformat(slot_start)
         slot_end_dt = datetime.fromisoformat(slot_end)
-        subject = f'Meeting booked: {summary}'
-        html = _build_booking_confirmation_html(summary, slot_start_dt, slot_end_dt, meeting_link)
+        all_names = [m['name'] for m in member_data if m['name']]
+
+        participant_html = _build_booking_confirmation_html(
+            summary, slot_start_dt, slot_end_dt, meeting_link,
+            participant_names=all_names, role='participant',
+        )
         for member in member_data:
+            if member['uid'] == host_uid:
+                continue
             if member['email']:
-                _send_resend_email(member['email'], subject, html)
+                _send_resend_email(
+                    member['email'],
+                    f"You're invited: {summary}",
+                    participant_html,
+                    reply_to=host_email or None,
+                )
+
+        host_html = _build_booking_confirmation_html(
+            summary, slot_start_dt, slot_end_dt, meeting_link,
+            participant_names=all_names, role='host',
+        )
+        if host_email:
+            _send_resend_email(host_email, f'Meeting booked: {summary}', host_html)
     except Exception as e:
         print(f'Booking confirmation email failed: {e}')
 
     return {
         'success': True,
-        'attendeeCount': len(attendee_emails),
+        'attendeeCount': len([m for m in member_data if m['uid'] != host_uid and m['email']]),
     }
 
 
@@ -832,6 +912,7 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
     summary = meeting.get('name', 'Meeting')
     meeting_link = (meeting.get('meetingLink') or '').strip()
     member_uids: list[str] = meeting.get('memberUids', [])
+    host_uid = meeting.get('hostUid', '')
     calendar_event_ids: dict = meeting.get('calendarEventIds') or {}
 
     # Delete the calendar event from every participant's calendar.
@@ -844,12 +925,13 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
         udata = user_doc.to_dict() or {}
         access_token: str = udata.get('googleAccessToken', '')
         refresh_token: str = udata.get('googleRefreshToken', '')
-        if not access_token and refresh_token:
-            access_token = _refresh_access_token(refresh_token) or ''
+        token_expires_at = udata.get('tokenExpiresAt')
+        access_token = _resolve_access_token(client, uid, access_token, refresh_token, token_expires_at)
         if access_token:
             _delete_calendar_event(access_token, event_id)
 
     # Collect member emails for notifications.
+    host_email: str = ''
     member_emails: list[str] = []
     for uid in member_uids:
         user_doc = client.collection('users').document(uid).get()
@@ -858,6 +940,9 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
         udata = user_doc.to_dict() or {}
         settings = udata.get('settings') or {}
         email = (udata.get('email') or '').strip()
+        if uid == host_uid:
+            host_email = email
+            continue
         if not email:
             continue
         if action == 'cancel' and not settings.get('notifyMeetingCancelled', True):
@@ -878,7 +963,7 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
             html = f'<p>The meeting <strong>{summary}</strong> has been cancelled.</p>'
 
         for email in member_emails:
-            _send_resend_email(email, subject, html)
+            _send_resend_email(email, subject, html, reply_to=host_email or None)
     except Exception as e:
         print(f'Cancel/rebook notification email failed: {e}')
 
@@ -893,3 +978,164 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
         client.collection('meetings').document(meeting_id).delete()
 
     return {'success': True}
+
+
+@https_fn.on_call()
+def decline_meeting(req: https_fn.CallableRequest) -> dict:
+    """Mark a participant as having declined a meeting and notify all other members."""
+    if req.auth is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in to decline a meeting.',
+        )
+
+    uid = req.auth.uid
+    meeting_id = (req.data.get('meetingId') or '').strip()
+    if not meeting_id:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='meetingId is required.',
+        )
+
+    client = _get_db()
+    meeting_doc = client.collection('meetings').document(meeting_id).get()
+    if not meeting_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message='Meeting not found.',
+        )
+
+    meeting_data = meeting_doc.to_dict() or {}
+    member_uids: list[str] = meeting_data.get('memberUids') or []
+    if uid not in member_uids:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message='You are not a participant of this meeting.',
+        )
+
+    summary: str = meeting_data.get('name', 'Meeting')
+    host_uid: str = meeting_data.get('hostUid', '')
+    members: list[dict] = meeting_data.get('members') or []
+
+    # Fetch decliner's display name.
+    decliner_doc = client.collection('users').document(uid).get()
+    decliner_data = decliner_doc.to_dict() or {} if decliner_doc.exists else {}
+    decliner_name: str = decliner_data.get('displayName') or 'A participant'
+
+    # Mark the meeting as declined by this participant.
+    client.collection('meetings').document(meeting_id).update({
+        'declinedByUids': admin_firestore.ArrayUnion([uid]),
+    })
+
+    # Delete their Google Calendar event if one exists.
+    calendar_event_ids: dict = meeting_data.get('calendarEventIds') or {}
+    event_id: str = calendar_event_ids.get(uid, '')
+    if event_id:
+        access_token: str = decliner_data.get('googleAccessToken', '')
+        refresh_token: str = decliner_data.get('googleRefreshToken', '')
+        token_expires_at = decliner_data.get('tokenExpiresAt')
+        access_token = _resolve_access_token(client, uid, access_token, refresh_token, token_expires_at)
+        if access_token:
+            _delete_calendar_event(access_token, event_id)
+
+    # Notify all other participants by email.
+    try:
+        host_email: str = ''
+        for member in members:
+            if member.get('uid') == host_uid:
+                host_email = (member.get('email') or '').strip()
+                break
+        if not host_email:
+            host_doc = client.collection('users').document(host_uid).get()
+            if host_doc.exists:
+                host_email = (host_doc.to_dict() or {}).get('email', '')
+
+        subject = f'Meeting update: {summary}'
+        html = (
+            f'<p><strong>{decliner_name}</strong> has declined the meeting <strong>{summary}</strong>.</p>'
+            f'<p>You may want to reschedule or reach out to the host for next steps.</p>'
+        )
+        for member in members:
+            member_uid = member.get('uid', '')
+            member_email = (member.get('email') or '').strip()
+            if member_uid == uid or not member_email:
+                continue
+            _send_resend_email(member_email, subject, html, reply_to=host_email or None)
+    except Exception as e:
+        print(f'Decline notification email failed: {e}')
+
+    return {'success': True}
+
+
+@https_fn.on_call()
+def refresh_meeting_tokens(req: https_fn.CallableRequest) -> dict:
+    """Refresh Google OAuth tokens for all meeting participants and return connection status.
+
+    Called from the MeetingDetail page on load so the frontend always shows
+    accurate calendar-connected state and tokens in Firestore are kept fresh.
+    """
+    if req.auth is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in.',
+        )
+
+    meeting_id = (req.data.get('meetingId') or '').strip()
+    if not meeting_id:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='meetingId is required.',
+        )
+
+    client = _get_db()
+    meeting_doc = client.collection('meetings').document(meeting_id).get()
+    if not meeting_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message='Meeting not found.',
+        )
+
+    member_uids: list[str] = (meeting_doc.to_dict() or {}).get('memberUids') or []
+    connection_status: dict[str, bool] = {}
+
+    for uid in member_uids:
+        user_doc = client.collection('users').document(uid).get()
+        if not user_doc.exists:
+            connection_status[uid] = False
+            continue
+        udata = user_doc.to_dict() or {}
+        access_token: str = udata.get('googleAccessToken', '')
+        refresh_token: str = udata.get('googleRefreshToken', '')
+        token_expires_at = udata.get('tokenExpiresAt')
+
+        if not refresh_token:
+            # User never connected calendar or explicitly disconnected.
+            connection_status[uid] = False
+            continue
+
+        # If the stored access token has clearly has time remaining, no network call needed.
+        if access_token and token_expires_at is not None:
+            now = datetime.now(timezone.utc)
+            expires = token_expires_at
+            if getattr(expires, 'tzinfo', None) is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if (expires - now).total_seconds() > 300:
+                connection_status[uid] = True
+                continue
+
+        # Token is expired or near-expiry — attempt a real refresh to confirm connectivity.
+        result = _refresh_access_token(refresh_token)
+        if result:
+            new_token, expires_in = result
+            new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+            client.collection('users').document(uid).update({
+                'googleAccessToken': new_token,
+                'tokenExpiresAt': new_expires_at,
+                'tokenUpdatedAt': datetime.now(timezone.utc),
+            })
+            connection_status[uid] = True
+        else:
+            # Refresh failed — token is expired or revoked. User must reconnect in Settings.
+            connection_status[uid] = False
+
+    return {'connectionStatus': connection_status}

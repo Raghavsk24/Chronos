@@ -167,7 +167,7 @@ export default function Login() {
 
   const ensureUserDoc = async (
     user: User,
-    options?: { accessToken?: string; refreshToken?: string; firstName?: string; lastName?: string; displayName?: string }
+    options?: { accessToken?: string; refreshToken?: string; tokenExpiresAt?: Date; firstName?: string; lastName?: string; displayName?: string }
   ) => {
     const userRef = doc(db, 'users', user.uid)
     const userSnap = await getDoc(userRef)
@@ -199,6 +199,9 @@ export default function Login() {
     if (options?.accessToken) {
       payload.googleAccessToken = options.accessToken
       payload.tokenUpdatedAt = new Date()
+      if (options.tokenExpiresAt) {
+        payload.tokenExpiresAt = options.tokenExpiresAt
+      }
     }
     if (options?.refreshToken) {
       payload.googleRefreshToken = options.refreshToken
@@ -215,6 +218,8 @@ export default function Login() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const tokenResponse = (result as any)._tokenResponse
       const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
+      const expiresIn = parseInt(tokenResponse?.expiresIn ?? '3600', 10)
+      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000)
 
       let linkedPassword = false
       if (linkIntent) {
@@ -264,6 +269,7 @@ export default function Login() {
       await ensureUserDoc(user, {
         accessToken,
         refreshToken: refreshToken || undefined,
+        tokenExpiresAt,
         firstName: linkIntent?.firstName,
         lastName: linkIntent?.lastName,
         displayName: displayNameFromForm,

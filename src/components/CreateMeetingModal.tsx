@@ -185,7 +185,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                 ) : lobbies.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No lobbies found. Create one first.</p>
                 ) : (
-                  <Select value={selectedLobbyId} onValueChange={setSelectedLobbyId}>
+                  <Select value={selectedLobbyId} onValueChange={(v) => setSelectedLobbyId(v ?? '')}>
                     <SelectTrigger className="h-8 w-full">
                       <SelectValue placeholder="Choose a lobby...">
                         {lobbies.find(l => l.id === selectedLobbyId)?.name}
@@ -224,7 +224,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
             <div className="flex gap-3">
               <div className="flex flex-col gap-1.5 flex-1">
                 <Label htmlFor="m-duration">Duration</Label>
-                <Select value={duration} onValueChange={setDuration}>
+                <Select value={duration} onValueChange={(v) => setDuration(v ?? '')}>
                   <SelectTrigger className="h-8 w-full">
                     <SelectValue>{{ '30': '30 min', '60': '1 hour', '90': '1.5 hours', '120': '2 hours' }[duration]}</SelectValue>
                   </SelectTrigger>

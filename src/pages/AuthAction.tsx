@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { applyActionCode, checkActionCode } from 'firebase/auth'
 import { auth } from '@/lib/firebase'
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 
 type ActionState = {
   loading: boolean
@@ -90,13 +90,9 @@ export default function AuthAction() {
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : (
           <div className="pt-1 flex items-center gap-2">
-            <Button asChild>
-              <Link to="/login">Go to Login</Link>
-            </Button>
+            <Link to="/login" className={buttonVariants()}>Go to Login</Link>
             {!state.success && (
-              <Button asChild variant="outline">
-                <Link to="/">Back to Home</Link>
-              </Button>
+              <Link to="/" className={buttonVariants({ variant: 'outline' })}>Back to Home</Link>
             )}
           </div>
         )}

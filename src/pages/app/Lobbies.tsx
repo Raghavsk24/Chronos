@@ -43,6 +43,7 @@ interface MeetingCounts {
   scheduling: number
   scheduled: number
   completed: number
+  declined: number
 }
 
 type ConfirmAction = { type: 'delete' | 'leave'; lobby: Lobby }
@@ -95,7 +96,7 @@ export default function Lobbies() {
       const counts: Record<string, MeetingCounts> = {}
       meetingsSnap.docs.forEach((d) => {
         const { lobbyId, status } = d.data() as { lobbyId: string; status: MeetingStatus }
-        if (!counts[lobbyId]) counts[lobbyId] = { scheduling: 0, scheduled: 0, completed: 0 }
+        if (!counts[lobbyId]) counts[lobbyId] = { scheduling: 0, scheduled: 0, completed: 0, declined: 0 }
         if (status in counts[lobbyId]) counts[lobbyId][status as keyof MeetingCounts]++
       })
 

@@ -20,6 +20,7 @@ interface Meeting {
   duration: number
   status: MeetingStatus
   scheduledSlot?: { start: string; end: string }
+  declinedByUids?: string[]
   createdAt?: { seconds: number }
 }
 
@@ -37,10 +38,14 @@ function parseUtcDate(iso: string): Date {
   return new Date(iso.endsWith('Z') ? iso : `${iso}Z`)
 }
 
+function effectiveStatus(m: Meeting): MeetingStatus {
+  return (m.declinedByUids?.length ?? 0) > 0 ? 'declined' : m.status
+}
+
 function sortedMeetings(meetings: Meeting[]): Meeting[] {
-  const order: Record<MeetingStatus, number> = { scheduled: 0, scheduling: 1, completed: 2 }
+  const order: Record<MeetingStatus, number> = { scheduled: 0, declined: 1, scheduling: 2, completed: 3 }
   return [...meetings].sort((a, b) => {
-    const orderDiff = order[a.status] - order[b.status]
+    const orderDiff = order[effectiveStatus(a)] - order[effectiveStatus(b)]
     if (orderDiff !== 0) return orderDiff
     if (a.status === 'scheduled' && a.scheduledSlot && b.scheduledSlot) {
       return new Date(a.scheduledSlot.start).getTime() - new Date(b.scheduledSlot.start).getTime()
@@ -84,13 +89,8 @@ export default function Dashboard() {
   useEffect(() => { fetchData() }, [fetchData])
 
   const scheduledMeetings = useMemo(
-    () => meetings.filter((m) => m.scheduledSlot && (m.status === 'scheduled' || m.status === 'completed')),
+    () => meetings.filter((m) => m.scheduledSlot && (m.status === 'scheduled' || m.status === 'completed') && (m.declinedByUids?.length ?? 0) === 0),
     [meetings]
-  )
-
-  const meetingDates = useMemo(
-    () => scheduledMeetings.map((m) => parseUtcDate(m.scheduledSlot!.start)),
-    [scheduledMeetings]
   )
 
   const meetingCountsByDay = useMemo(() => {
@@ -177,7 +177,7 @@ export default function Dashboard() {
       pickTopLobby(countByLobby('completed')) ??
       pickTopLobby(countByLobby('scheduled')) ??
       pickTopLobby(countByLobby('scheduling')) ??
-      '—'
+      '-'
 
     const completedCount = meetings.filter((m) => m.status === 'completed').length
     const rawHours = (completedCount * 36) / 60
@@ -264,7 +264,7 @@ export default function Dashboard() {
                 ) : (
                   <ul className="flex flex-col gap-2">
                     {visibleMeetings.map((m) => {
-                      const { label, className } = meetingStatusConfig(m.status)
+                      const { label, className } = meetingStatusConfig(effectiveStatus(m))
                       const isOnSelectedDay = selectedDayMeetingIds.has(m.id)
                       return (
                         <li key={m.id}>

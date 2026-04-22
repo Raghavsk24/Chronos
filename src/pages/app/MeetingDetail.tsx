@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { arrayRemove, doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore'
+import { arrayRemove, arrayUnion, doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, CheckCircle2, CircleHelp, Settings, Trash2, LogOut, RotateCcw, X } from 'lucide-react'
-import { db, functions } from '@/lib/firebase'
+import { ArrowLeft, ExternalLink, CheckCircle2, CircleHelp, Settings, Trash2, LogOut, RotateCcw, X, UserPlus, XCircle } from 'lucide-react'
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
+import { db, functions, auth, googleProvider } from '@/lib/firebase'
 import { useAuthStore } from '@/store/authStore'
 import Avatar from '@/components/Avatar'
 import { Badge } from '@/components/ui/badge'
@@ -21,7 +22,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { slotDate, slotTime, tzAbbr, meetingStatusConfig, type MeetingStatus } from '@/lib/timeUtils'
+import { slotDate, slotTime, tzAbbr, slotDateISO, meetingStatusConfig, type MeetingStatus } from '@/lib/timeUtils'
 
 interface Member {
   uid: string
@@ -74,6 +75,7 @@ interface Meeting {
   hostName: string
   memberUids?: string[]
   members?: Member[]
+  declinedByUids?: string[]
   createdAt?: FirestoreTimestampLike
   preferences?: {
     dayPart?: 'morning' | 'afternoon' | 'evening'
@@ -119,6 +121,8 @@ const INITIAL_VISIBLE_SLOTS = 5
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
 const cancelBooking = httpsCallable(functions, 'cancel_booking')
+const declineMeeting = httpsCallable(functions, 'decline_meeting')
+const refreshMeetingTokens = httpsCallable(functions, 'refresh_meeting_tokens')
 
 export default function MeetingDetail() {
   const { lobbyId, meetingId } = useParams()
@@ -134,6 +138,7 @@ export default function MeetingDetail() {
   // Scheduling
   const [finding, setFinding] = useState(false)
   const [slots, setSlots] = useState<Slot[]>([])
+  const [showAllSlots, setShowAllSlots] = useState(false)
   const [selectedSlot, setSelectedSlot] = useState<Slot | null>(null)
   const [scheduleError, setScheduleError] = useState('')
   const [booking, setBooking] = useState(false)
@@ -144,7 +149,6 @@ export default function MeetingDetail() {
   const [calendarConnectionReason, setCalendarConnectionReason] = useState('Checking Google Calendar connection...')
   const [calendarConnectionByUid, setCalendarConnectionByUid] = useState<Record<string, boolean>>({})
   const [coverageSummary, setCoverageSummary] = useState<CoverageSummary | null>(null)
-  const [visibleSlotCount, setVisibleSlotCount] = useState(INITIAL_VISIBLE_SLOTS)
 
   // Meeting settings
   const [showSettings, setShowSettings] = useState(false)
@@ -162,10 +166,18 @@ export default function MeetingDetail() {
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date())
   const [extraBuffer, setExtraBuffer] = useState(false)
 
-  // Delete / leave
+  const [reconnectingCalendar, setReconnectingCalendar] = useState(false)
+
+  // Delete / leave / decline / cancel
   const [showDelete, setShowDelete] = useState(false)
   const [showLeave, setShowLeave] = useState(false)
+  const [showCancelMeeting, setShowCancelMeeting] = useState(false)
   const [acting, setActing] = useState(false)
+  const [declining, setDeclining] = useState(false)
+
+  // Lobby members (for adding participants)
+  const [lobbyMembers, setLobbyMembers] = useState<Member[]>([])
+  const [showAddParticipants, setShowAddParticipants] = useState(false)
 
   const refreshCalendarConnectionState = useCallback(async () => {
     if (!user) return
@@ -189,7 +201,21 @@ export default function MeetingDetail() {
     setCalendarConnectionReason('')
   }, [user])
 
-  const refreshCalendarStatuses = useCallback(async (participantUids: string[]) => {
+  const refreshCalendarStatuses = useCallback(async (participantUids: string[], currentMeetingId?: string) => {
+    const id = currentMeetingId ?? meetingId
+    if (id) {
+      try {
+        const result = await refreshMeetingTokens({ meetingId: id })
+        const data = result.data as { connectionStatus?: Record<string, boolean> }
+        if (data.connectionStatus) {
+          setCalendarConnectionByUid(data.connectionStatus)
+          return
+        }
+      } catch (e) {
+        console.warn('refresh_meeting_tokens failed, falling back to Firestore read:', e)
+      }
+    }
+    // Fallback: read Firestore directly without triggering a token refresh.
     const statusEntries = await Promise.all(
       participantUids.map(async (uid) => {
         const memberSnap = await getDoc(doc(db, 'users', uid))
@@ -200,7 +226,7 @@ export default function MeetingDetail() {
       })
     )
     setCalendarConnectionByUid(Object.fromEntries(statusEntries))
-  }, [])
+  }, [meetingId])
 
   const fetchMeeting = useCallback(async () => {
     if (!meetingId || !user) return
@@ -208,6 +234,30 @@ export default function MeetingDetail() {
     const tz = userSnap.data()?.settings?.timezone
     if (tz) setUserTimezone(tz)
   }, [meetingId, user])
+
+  // Fetch lobby members so the host can add participants from the lobby.
+  useEffect(() => {
+    if (!lobbyId) return
+    getDoc(doc(db, 'lobbies', lobbyId)).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data()
+        setLobbyMembers((data.members as Member[]) ?? [])
+      }
+    })
+  }, [lobbyId])
+
+  // Sync the host's own calendar connection state from the accurate backend result.
+  useEffect(() => {
+    if (!user?.uid) return
+    const status = calendarConnectionByUid[user.uid]
+    if (status === undefined) return
+    setCalendarConnectionReady(status)
+    if (!status) {
+      setCalendarConnectionReason('Google Calendar access expired. Reconnect it in Settings before scheduling.')
+    } else {
+      setCalendarConnectionReason('')
+    }
+  }, [calendarConnectionByUid, user?.uid])
 
   const prevMemberUidsRef = useRef<string>('')
 
@@ -269,7 +319,6 @@ export default function MeetingDetail() {
     setSlots([])
     setSelectedSlot(null)
     setScheduleError('')
-    setVisibleSlotCount(INITIAL_VISIBLE_SLOTS)
     try {
       const result = await scheduleMeeting({ meetingId: meeting.id })
       const data = result.data as {
@@ -285,6 +334,7 @@ export default function MeetingDetail() {
         setScheduleError(data.error)
       } else {
         setSlots(data.slots ?? [])
+        setShowAllSlots(false)
         if (data.warning) toast.info(data.warning)
         if (data.coverage?.ignoredMembers?.length) {
           toast.info(
@@ -302,15 +352,18 @@ export default function MeetingDetail() {
           setScheduleError('Sorry we were unable to find any available times to host this meeting for your group. We searched up to month ahead from today. Please free up time on your calendars or change the target date and try again.')
         } else if (targetDates?.length && data.slots?.length) {
           const targetDateSet = new Set(targetDates)
-          const anyOnTarget = data.slots.some((s) => {
-            const slotDate = new Date(s.start).toISOString().slice(0, 10)
-            return targetDateSet.has(slotDate)
+          // Check only the initial visible slots (first 5) to avoid confusing users
+          const initialVisibleSlots = data.slots.slice(0, INITIAL_VISIBLE_SLOTS)
+          const anyOnTargetInVisible = initialVisibleSlots.some((s) => {
+            const slotDateLocal = slotDateISO(s.start, userTimezone)
+            return targetDateSet.has(slotDateLocal)
           })
-          if (!anyOnTarget) {
+          // Only show toast if no target date slots appear in the initial visible slots
+          if (!anyOnTargetInVisible) {
             const labels = targetDates.map((d) =>
               format(new Date(`${d}T00:00:00`), 'MMMM do, yyyy')
             ).join(', ')
-            toast.info(`No availability on ${labels} — showing the closest available times instead.`)
+            toast.info(`No availability on ${labels} showing the closest available times instead.`)
           }
         }
       }
@@ -334,7 +387,7 @@ export default function MeetingDetail() {
       setMeeting({ ...meeting, status: 'scheduled', scheduledSlot: { start: selectedSlot.start, end: selectedSlot.end } })
       setSlots([])
       setSelectedSlot(null)
-      toast.success('Meeting booked! Calendar invites sent to all members.')
+      toast.success('Email invite sent to all participants')
     } catch (err: unknown) {
       setBookingError(err instanceof Error ? err.message : 'Failed to book meeting.')
     } finally {
@@ -396,7 +449,7 @@ export default function MeetingDetail() {
       meetingLink: meeting.meetingLink ?? '',
     })
     const storedDayPart = meeting.preferences?.dayPart
-    setDayPart((storedDayPart === 'midday' ? 'afternoon' : storedDayPart) ?? null)
+    setDayPart(((storedDayPart as string) === 'midday' ? 'afternoon' : storedDayPart) ?? null)
     setTargetDates(meeting.preferences?.targetDates ?? [])
     setTargetingDate(Boolean(meeting.preferences?.targetDates?.length))
     setExtraBuffer(Boolean(meeting.preferences?.extraBuffer))
@@ -408,8 +461,7 @@ export default function MeetingDetail() {
     setShowSettings(true)
   }
 
-  const visibleSlots = slots.slice(0, visibleSlotCount)
-  const hiddenSlotCount = Math.max(slots.length - visibleSlots.length, 0)
+  const visibleSlots = showAllSlots ? slots : slots.slice(0, INITIAL_VISIBLE_SLOTS)
 
   const addTargetDate = () => {
     const iso = toIsoDate(selectedTargetDate)
@@ -469,12 +521,15 @@ export default function MeetingDetail() {
     if (!meeting || !user) return
     setActing(true)
     try {
+      if (meeting.status === 'scheduled') {
+        await declineMeeting({ meetingId: meeting.id })
+      }
       const updatedMembers = meeting.members?.filter((m) => m.uid !== user.uid) ?? []
       await updateDoc(doc(db, 'meetings', meeting.id), {
         memberUids: arrayRemove(user.uid),
         members: updatedMembers,
       })
-      toast.success('You left the meeting.')
+      toast.success(meeting.status === 'scheduled' ? 'You declined the meeting.' : 'You left the meeting.')
       navigate(`/app/lobbies/${lobbyId}`)
     } catch {
       toast.error('Failed to leave meeting.')
@@ -482,13 +537,80 @@ export default function MeetingDetail() {
     }
   }
 
+  const handleDeclineMeeting = async () => {
+    if (!meeting || !user) return
+    setDeclining(true)
+    try {
+      await declineMeeting({ meetingId: meeting.id })
+      toast.success('You declined the meeting. Other participants have been notified.')
+    } catch {
+      toast.error('Failed to decline meeting.')
+    } finally {
+      setDeclining(false)
+    }
+  }
+
+  const handleReconnectCalendar = async () => {
+    if (!user || !meetingId) return
+    setReconnectingCalendar(true)
+    try {
+      const result = await signInWithPopup(auth, googleProvider)
+      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tokenResponse = (result as any)._tokenResponse
+      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
+      const expiresIn = parseInt(tokenResponse?.expiresIn ?? '3600', 10)
+      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000)
+
+      if (!accessToken) {
+        toast.error('Unable to get Google Calendar access. Please try again.')
+        return
+      }
+
+      await setDoc(doc(db, 'users', user.uid), {
+        googleAccessToken: accessToken,
+        tokenExpiresAt,
+        tokenUpdatedAt: new Date(),
+        ...(refreshToken ? { googleRefreshToken: refreshToken } : {}),
+      }, { merge: true })
+
+      const participantUids = meeting?.memberUids ?? meeting?.members?.map((m) => m.uid) ?? []
+      await refreshCalendarStatuses(participantUids, meetingId)
+      toast.success('Google Calendar reconnected.')
+    } catch {
+      toast.error('Google Calendar reconnect failed. Please try again.')
+    } finally {
+      setReconnectingCalendar(false)
+    }
+  }
+
+  const handleAddMember = async (member: Member) => {
+    if (!meeting) return
+    const currentMembers = meeting.members ?? []
+    if (currentMembers.some((m) => m.uid === member.uid)) return
+    try {
+      const updatedMembers = [...currentMembers, member]
+      await updateDoc(doc(db, 'meetings', meeting.id), {
+        memberUids: arrayUnion(member.uid),
+        members: updatedMembers,
+      })
+      toast.success(`${member.displayName} added to the meeting.`)
+      setShowAddParticipants(false)
+    } catch {
+      toast.error('Failed to add participant.')
+    }
+  }
+
   if (loading) return <div className="p-8"><p className="text-muted-foreground">Loading meeting...</p></div>
   if (!meeting) return null
 
   const isHost = user?.uid === meeting.hostUid
+  const effectiveStatus = (meeting.declinedByUids?.length ?? 0) > 0 ? 'declined' : meeting.status
+  const hasUserDeclined = meeting.declinedByUids?.includes(user?.uid ?? '') ?? false
+  const addableMembers = lobbyMembers.filter((m) => !meeting.memberUids?.includes(m.uid))
 
   const statusBadge = (() => {
-    const { label, className } = meetingStatusConfig(meeting.status)
+    const { label, className } = meetingStatusConfig(effectiveStatus)
     return (
       <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${className}`}>
         {label}
@@ -513,10 +635,17 @@ export default function MeetingDetail() {
             Delete Meeting
           </Button>
         ) : (
-          <Button variant="destructive" size="sm" onClick={() => setShowLeave(true)} className="shrink-0">
-            <LogOut className="size-3.5 mr-1.5" />
-            Leave Meeting
-          </Button>
+          <div className="flex items-center gap-2">
+            {meeting.status === 'scheduled' && !hasUserDeclined && (
+              <Button variant="outline" size="sm" onClick={handleDeclineMeeting} disabled={declining} className="shrink-0">
+                {declining ? 'Declining...' : 'Decline'}
+              </Button>
+            )}
+            <Button variant="destructive" size="sm" onClick={() => setShowLeave(true)} className="shrink-0">
+              <LogOut className="size-3.5 mr-1.5" />
+              Leave Meeting
+            </Button>
+          </div>
         )}
       </div>
 
@@ -605,7 +734,7 @@ export default function MeetingDetail() {
                   size="sm"
                   className="gap-2 text-green-700 border-green-200 hover:bg-green-50"
                   onClick={handleMarkComplete}
-                  disabled={completing || rebooking}
+                  disabled={completing || rebooking || acting}
                 >
                   <CheckCircle2 className="size-4" />
                   {completing ? 'Marking...' : 'Mark as Complete'}
@@ -615,10 +744,20 @@ export default function MeetingDetail() {
                   size="sm"
                   className="gap-2 text-blue-700 border-blue-200 hover:bg-blue-50"
                   onClick={handleRebook}
-                  disabled={rebooking || completing}
+                  disabled={rebooking || completing || acting}
                 >
                   <RotateCcw className="size-4" />
-                  {rebooking ? 'Rebooking...' : "Didn't like the timing? Rebook meeting"}
+                  {rebooking ? 'Rebooking...' : 'Rebook'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 text-destructive border-destructive/30 hover:bg-destructive/10"
+                  onClick={() => setShowCancelMeeting(true)}
+                  disabled={completing || rebooking || acting}
+                >
+                  <XCircle className="size-4" />
+                  Cancel Meeting
                 </Button>
               </div>
             )}
@@ -632,9 +771,10 @@ export default function MeetingDetail() {
                   variant="outline"
                   size="sm"
                   className="shrink-0"
-                  onClick={() => navigate('/app/settings')}
+                  onClick={handleReconnectCalendar}
+                  disabled={reconnectingCalendar}
                 >
-                  Open Settings
+                  {reconnectingCalendar ? 'Reconnecting...' : 'Reconnect Calendar'}
                 </Button>
               </div>
             )}
@@ -643,7 +783,7 @@ export default function MeetingDetail() {
               <div>
                 <h2 className="font-semibold">Find a meeting time</h2>
                 <p className="text-sm text-muted-foreground mt-0.5">
-                  Searches everyone's Google Calendar from 1 hour from now up to 1 month ahead.
+                  Searches everyone's Google Calendar
                 </p>
               </div>
               <div className="shrink-0">
@@ -676,7 +816,14 @@ export default function MeetingDetail() {
 
             {slots.length > 0 && (
               <div className="flex flex-col gap-2">
-                <p className="text-sm text-muted-foreground">Select a time to book:</p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">Select a time to book:</p>
+                  {slots.length > INITIAL_VISIBLE_SLOTS && (
+                    <p className="text-xs text-muted-foreground shrink-0">
+                      Showing {visibleSlots.length} of {slots.length} time slots
+                    </p>
+                  )}
+                </div>
                 {visibleSlots.map((slot, i) => {
                   const isSelected = selectedSlot?.start === slot.start
                   return (
@@ -710,22 +857,13 @@ export default function MeetingDetail() {
                 })}
 
                 {slots.length > INITIAL_VISIBLE_SLOTS && (
-                  <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/20 px-3 py-2">
-                    <p className="text-xs text-muted-foreground">
-                      Showing {visibleSlots.length} out of {slots.length} available time slots
-                    </p>
-                    {hiddenSlotCount > 0 && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setVisibleSlotCount((prev) => Math.min(prev + 5, slots.length))}
-                        className="h-7 px-2.5 text-xs"
-                      >
-                        Show {Math.min(5, hiddenSlotCount)} more
-                      </Button>
-                    )}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllSlots((v) => !v)}
+                    className="self-start text-xs text-primary hover:underline"
+                  >
+                    {showAllSlots ? 'Show less' : `Show ${slots.length - INITIAL_VISIBLE_SLOTS} more`}
+                  </button>
                 )}
 
                 {selectedSlot && (
@@ -734,7 +872,7 @@ export default function MeetingDetail() {
                     <Button className="mt-2 w-full" onClick={handleBook} disabled={booking}>
                       {booking
                         ? 'Booking...'
-                        : `Confirm - ${slotDate(selectedSlot.start, userTimezone)} ${slotTime(selectedSlot.start, userTimezone)}`}
+                        : `Confirm ${slotDate(selectedSlot.start, userTimezone)} ${slotTime(selectedSlot.start, userTimezone)}`}
                     </Button>
                   </>
                 )}
@@ -754,7 +892,20 @@ export default function MeetingDetail() {
 
       <div className="px-8 pb-8">
         <section className="border rounded-xl p-5">
-          <h2 className="font-semibold mb-3">Participants</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Participants</h2>
+            {isHost && (
+              <button
+                type="button"
+                onClick={() => setShowAddParticipants(true)}
+                className="flex items-center gap-1 text-xs text-primary hover:underline"
+                title="Add participant from lobby"
+              >
+                <UserPlus className="size-3.5" />
+                Add
+              </button>
+            )}
+          </div>
           {!meeting.members || meeting.members.length === 0 ? (
             <p className="text-sm text-muted-foreground">No participants found for this meeting.</p>
           ) : (
@@ -763,6 +914,7 @@ export default function MeetingDetail() {
                 const isHostMember = member.uid === meeting.hostUid
                 const isMe = member.uid === user?.uid
                 const connected = calendarConnectionByUid[member.uid]
+                const memberDeclined = meeting.declinedByUids?.includes(member.uid) ?? false
 
                 return (
                   <Fragment key={member.uid}>
@@ -776,7 +928,10 @@ export default function MeetingDetail() {
                             {isMe && <span className="text-muted-foreground font-normal text-xs"> (you)</span>}
                           </p>
                           <p className="text-xs text-muted-foreground truncate">{member.email}</p>
-                          {!connected && (
+                          {memberDeclined && (
+                            <p className="text-[11px] text-[var(--status-declined-fg)] mt-0.5">Declined</p>
+                          )}
+                          {!connected && !memberDeclined && (
                             <p className="text-[11px] text-amber-700 mt-0.5">
                               Ignored by scheduler until Google Calendar is connected.
                             </p>
@@ -846,7 +1001,7 @@ export default function MeetingDetail() {
                 <label className="text-sm font-medium">Duration</label>
                 <Select
                   value={settingsForm.duration}
-                  onValueChange={(v) => setSettingsForm((prev) => ({ ...prev, duration: v }))}
+                  onValueChange={(v) => setSettingsForm((prev) => ({ ...prev, duration: v ?? prev.duration }))}
                 >
                   <SelectTrigger className="h-8 w-full">
                     <SelectValue>{{ '30': '30 min', '60': '1 hour', '90': '1.5 hours', '120': '2 hours' }[settingsForm.duration]}</SelectValue>
@@ -1067,16 +1222,70 @@ export default function MeetingDetail() {
       {/* Leave confirmation */}
       <Dialog open={showLeave} onOpenChange={setShowLeave}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Leave meeting?</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{meeting.status === 'scheduled' ? 'Decline and leave meeting?' : 'Leave meeting?'}</DialogTitle>
+          </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            You will be removed from <strong>{meeting.name}</strong> and lose access to its details.
+            {meeting.status === 'scheduled'
+              ? <>You will be marked as declined and all other participants will be notified. You will lose access to <strong>{meeting.name}</strong>.</>
+              : <>You will be removed from <strong>{meeting.name}</strong> and lose access to its details.</>
+            }
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowLeave(false)} disabled={acting}>Cancel</Button>
             <Button variant="destructive" onClick={handleLeaveMeeting} disabled={acting}>
-              {acting ? 'Leaving...' : 'Leave meeting'}
+              {acting ? (meeting.status === 'scheduled' ? 'Declining...' : 'Leaving...') : (meeting.status === 'scheduled' ? 'Decline & leave' : 'Leave meeting')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel scheduled meeting */}
+      <Dialog open={showCancelMeeting} onOpenChange={setShowCancelMeeting}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Cancel this booking?</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will remove <strong>{meeting.name}</strong> from all participants' Google Calendars and send a cancellation email. The meeting will return to scheduling so you can pick a new time.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCancelMeeting(false)} disabled={rebooking}>Back</Button>
+            <Button
+              variant="destructive"
+              onClick={async () => { setShowCancelMeeting(false); await handleRebook() }}
+              disabled={rebooking}
+            >
+              {rebooking ? 'Cancelling...' : 'Cancel booking'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add participants from lobby */}
+      <Dialog open={showAddParticipants} onOpenChange={setShowAddParticipants}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add participants</DialogTitle></DialogHeader>
+          {addableMembers.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">
+              Everyone in your lobby is added to this meeting.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y">
+              {addableMembers.map((member) => (
+                <li key={member.uid} className="flex items-center justify-between gap-3 py-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Avatar src={member.photoURL} name={member.displayName} className="w-8 h-8 text-xs" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{member.displayName}</p>
+                      <p className="text-xs text-muted-foreground truncate">{member.email}</p>
+                    </div>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => handleAddMember(member)}>
+                    Add
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
         </DialogContent>
       </Dialog>
     </div>

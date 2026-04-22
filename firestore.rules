@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Any signed-in user can read user profiles (needed to display participant
+    // names/avatars in lobbies and meetings). Only the owner can write their own doc.
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Lobbies: members can read and update (e.g. leave), only the host can delete.
+    // Any signed-in user can create a lobby if they declare themselves as host.
+    match /lobbies/{lobbyId} {
+      allow read:   if request.auth != null
+                    && request.auth.uid in resource.data.memberUids;
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.hostUid;
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.memberUids;
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.hostUid;
+    }
+
+    // Meetings: members can read and update (e.g. leave, decline), only the host
+    // can delete. Any signed-in user can create a meeting if they declare themselves
+    // as host. Cloud Functions (admin SDK) bypass these rules entirely.
+    match /meetings/{meetingId} {
+      allow read:   if request.auth != null
+                    && request.auth.uid in resource.data.memberUids;
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.hostUid;
+      allow update: if request.auth != null
+                    && request.auth.uid in resource.data.memberUids;
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.hostUid;
+    }
+  }
+}

@@ -16,10 +16,8 @@
       ]
     }
   ],
-  "emulators": {
-    "functions": {
-      "port": 5001
-    }
+  "firestore": {
+    "rules": "firestore.rules"
   },
   "hosting": {
     "public": "dist",
