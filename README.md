@@ -2,15 +2,15 @@
 
 Chronos is a smart group meeting scheduler. It connects to each participant's Google Calendar, analyses availability across the group, and ranks candidate time slots using a multi-factor scoring algorithm that accounts for time-of-day preference, calendar breathing room, and proximity to a target date.
 
-**Live:** [chronos-ba69a.web.app](https://chronos-ba69a.web.app) *(custom domain coming soon)*
-
 <p>
-  <img width=49% height=49% alt="Screenshot 2026-04-21 113730" src="https://github.com/user-attachments/assets/fcf5ffe3-7fe2-4054-a509-18a1ecb138b8" />
+  <img width=49% height=49%  alt="Screenshot 2026-04-21 222948" src="https://github.com/user-attachments/assets/3a6a42e6-0604-4ba6-967d-6f895f166255" />
   <img width=49% height=49% alt="Screenshot 2026-04-21 113730" src="https://github.com/user-attachments/assets/04e67086-0890-4904-b0e1-68fc90415d07" />
 </p>
 <p>
   <img width=49% height=49% alt="Screenshot 2026-04-21 130909" src="https://github.com/user-attachments/assets/ecc93f28-6baa-4770-a071-bca9b9a9e71b" />
-  <img width=49% height=49% alt="Screenshot 2026-04-21 113657" src="https://github.com/user-attachments/assets/01363e62-dc51-4dfc-9060-af9fde29226f" />
+  <img width=49% height=49% alt="Screenshot 2026-04-21 221529" src="https://github.com/user-attachments/assets/11cfa6d2-8915-4370-99d7-9a31145472f7" />
+
+
 </p>
 
 ## Tech Stack
@@ -49,7 +49,7 @@ The algorithm lives in `functions/scheduling/algorithm.py` and runs inside the `
 
 ### Step 1: Collect availability
 
-For each participant with a connected Google Calendar, the backend calls the Google Calendar FreeBusy API to fetch their busy intervals over the next 4 weeks. Expired access tokens are automatically refreshed using the stored refresh token before every scheduling run.
+For each participant with a connected Google Calendar, the backend calls the Google Calendar FreeBusy API to fetch their busy intervals over the next 4 weeks.
 
 ### Step 2: Compute the shared work window
 
@@ -77,9 +77,7 @@ Every passing slot receives three component scores:
 proximity = 1 / (1 + days_away_from_target)
 ```
 
-This gives the exact target date a score of 1.0, one day off a score of 0.5, two days off 0.33, and so on.
-
-**Final score**
+**Final score:**
 
 ```
 score = 0.7 * proximity_score + 0.15 * position_score + 0.15 * buffer_score
@@ -87,7 +85,7 @@ score = 0.7 * proximity_score + 0.15 * position_score + 0.15 * buffer_score
 
 ### Step 5: Return ranked slots
 
-Slots are sorted by final score (descending), with the buffer average as a tiebreaker. Up to 20 slots are returned to the frontend where they are displayed with a score breakdown tooltip on each slot and a "Show more" toggle after the first five.
+The top 5 ranked slots are returned. 
 
 
 ## Getting Started
@@ -102,7 +100,6 @@ Slots are sorted by final score (descending), with the buffer average as a tiebr
 - **Resend account** with a verified sending domain — [resend.com](https://resend.com)
 - **Sentry account** (optional, for error monitoring) — [sentry.io](https://sentry.io)
 
----
 
 ### 1. Clone the repository
 
@@ -111,7 +108,6 @@ git clone https://github.com/Raghavsk24/Chronos.git
 cd Chronos
 ```
 
----
 
 ### 2. Frontend environment variables
 
@@ -128,12 +124,9 @@ VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
-
-# Optional — enables Sentry error monitoring in the browser
 VITE_SENTRY_DSN=
 ```
 
----
 
 ### 3. Backend environment variables
 
@@ -144,12 +137,9 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 RESEND_API_KEY=
 REMINDER_FROM_EMAIL=you@yourdomain.com
-
-# Optional — enables Sentry error monitoring in Cloud Functions
 SENTRY_DSN=
 ```
 
----
 
 ### 4. Install frontend dependencies
 
@@ -157,7 +147,6 @@ SENTRY_DSN=
 npm install
 ```
 
----
 
 ### 5. Set up the Python virtual environment
 
@@ -180,7 +169,6 @@ venv\Scripts\pip install -r requirements.txt
 cd ..
 ```
 
----
 
 ### 6. Connect the Firebase project
 
@@ -190,17 +178,12 @@ firebase use --add
 
 Select your Firebase project from the list.
 
----
 
 ### 7. Run locally
 
 ```bash
 npm run dev
 ```
-
-The app connects directly to your Firebase project (Firestore, Auth, and deployed Cloud Functions). No emulator needed.
-
----
 
 ### 8. Deploy to production
 
