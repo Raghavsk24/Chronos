@@ -1,6 +1,8 @@
 # Chronos
 
-Chronos is a smart group meeting scheduler. It connects to each participant's Google Calendar, analyses availability across the group, and ranks candidate time slots using a multi-factor scoring algorithm that accounts for time-of-day preference, calendar breathing room, and proximity to a target date.
+Chronos is a full-stack web application that automatically schedules meetings on Google Calendar for large groups. It achieves this by connecting to each participant's Google Calendar, analyzing availability across the group and ranking candidate time slots using a multi-factor scoring algorithm.
+
+**Live App:** https://chronos-ba69a.web.app/
 
 <p>
   <img width=49% height=49%  alt="Screenshot 2026-04-21 222948" src="https://github.com/user-attachments/assets/3a6a42e6-0604-4ba6-967d-6f895f166255" />
@@ -19,13 +21,11 @@ Chronos is a smart group meeting scheduler. It connects to each participant's Go
 
 ![React](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![shadcn/ui](https://img.shields.io/badge/shadcn%2Fui-000000?style=for-the-badge&logo=shadcnui&logoColor=white)
 ![Zustand](https://img.shields.io/badge/Zustand-443E38?style=for-the-badge&logo=react&logoColor=white)
-![date-fns](https://img.shields.io/badge/date--fns-770C56?style=for-the-badge&logo=npm&logoColor=white)
 ![Sonner](https://img.shields.io/badge/Sonner-000000?style=for-the-badge&logo=npm&logoColor=white)
-![Sentry](https://img.shields.io/badge/Sentry-362D59?style=for-the-badge&logo=sentry&logoColor=white)
 
 ### Backend
 
@@ -67,7 +67,7 @@ For each valid working day, the algorithm steps through the shared window in 15-
 
 Every passing slot receives three component scores:
 
-**Position score (15% of total score):** The work window is divided into three equal thirds: morning, midday, and afternoon. The score peaks at the centre of the preferred third and decays linearly toward 0 at the opposite end.
+**Position score (15% of total score):** The work window is divided into three equal thirds: morning, midday and afternoon. The score peaks at the center of the preferred third and decays linearly toward 0 at the opposite end.
 
 **Buffer score (15% of total score):** Measures how much free time surrounds the slot for each participant. The gap between the slot and the nearest adjacent event on each side is measured and normalised to 0–1 (120 minutes of free time = full score of 1.0).
 
