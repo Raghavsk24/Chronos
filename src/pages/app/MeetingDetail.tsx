@@ -121,7 +121,6 @@ const INITIAL_VISIBLE_SLOTS = 5
 const scheduleMeeting = httpsCallable(functions, 'schedule_meeting')
 const bookMeeting = httpsCallable(functions, 'book_meeting')
 const cancelBooking = httpsCallable(functions, 'cancel_booking')
-const declineMeeting = httpsCallable(functions, 'decline_meeting')
 const refreshMeetingTokens = httpsCallable(functions, 'refresh_meeting_tokens')
 
 export default function MeetingDetail() {
@@ -173,7 +172,6 @@ export default function MeetingDetail() {
   const [showLeave, setShowLeave] = useState(false)
   const [showCancelMeeting, setShowCancelMeeting] = useState(false)
   const [acting, setActing] = useState(false)
-  const [declining, setDeclining] = useState(false)
 
   // Lobby members (for adding participants)
   const [lobbyMembers, setLobbyMembers] = useState<Member[]>([])
@@ -189,9 +187,10 @@ export default function MeetingDetail() {
     }
 
     const userData = userSnap.data()
-    const hasToken = Boolean(userData.googleAccessToken || userData.googleRefreshToken)
+    const hasRefreshToken = Boolean(userData.googleRefreshToken)
+    const isDisconnected = Boolean(userData.calendarDisconnected)
 
-    if (!hasToken) {
+    if (!hasRefreshToken || isDisconnected) {
       setCalendarConnectionReady(false)
       setCalendarConnectionReason('Google Calendar is not connected. Reconnect it in Settings before scheduling.')
       return
@@ -215,13 +214,13 @@ export default function MeetingDetail() {
         console.warn('refresh_meeting_tokens failed, falling back to Firestore read:', e)
       }
     }
-    // Fallback: read Firestore directly without triggering a token refresh.
+    // Fallback: read Firestore directly.
     const statusEntries = await Promise.all(
       participantUids.map(async (uid) => {
         const memberSnap = await getDoc(doc(db, 'users', uid))
         if (!memberSnap.exists()) return [uid, false] as const
         const memberData = memberSnap.data() as Record<string, unknown>
-        const connected = Boolean(memberData.googleAccessToken || memberData.googleRefreshToken)
+        const connected = Boolean(memberData.googleRefreshToken) && !Boolean(memberData.calendarDisconnected)
         return [uid, connected] as const
       })
     )
@@ -521,9 +520,6 @@ export default function MeetingDetail() {
     if (!meeting || !user) return
     setActing(true)
     try {
-      if (meeting.status === 'scheduled') {
-        await declineMeeting({ meetingId: meeting.id })
-      }
       const updatedMembers = meeting.members?.filter((m) => m.uid !== user.uid) ?? []
       await updateDoc(doc(db, 'meetings', meeting.id), {
         memberUids: arrayRemove(user.uid),
@@ -534,19 +530,6 @@ export default function MeetingDetail() {
     } catch {
       toast.error('Failed to leave meeting.')
       setActing(false)
-    }
-  }
-
-  const handleDeclineMeeting = async () => {
-    if (!meeting || !user) return
-    setDeclining(true)
-    try {
-      await declineMeeting({ meetingId: meeting.id })
-      toast.success('You declined the meeting. Other participants have been notified.')
-    } catch {
-      toast.error('Failed to decline meeting.')
-    } finally {
-      setDeclining(false)
     }
   }
 
@@ -606,7 +589,6 @@ export default function MeetingDetail() {
 
   const isHost = user?.uid === meeting.hostUid
   const effectiveStatus = (meeting.declinedByUids?.length ?? 0) > 0 ? 'declined' : meeting.status
-  const hasUserDeclined = meeting.declinedByUids?.includes(user?.uid ?? '') ?? false
   const addableMembers = lobbyMembers.filter((m) => !meeting.memberUids?.includes(m.uid))
 
   const statusBadge = (() => {
@@ -636,11 +618,6 @@ export default function MeetingDetail() {
           </Button>
         ) : (
           <div className="flex items-center gap-2">
-            {meeting.status === 'scheduled' && !hasUserDeclined && (
-              <Button variant="outline" size="sm" onClick={handleDeclineMeeting} disabled={declining} className="shrink-0">
-                {declining ? 'Declining...' : 'Decline'}
-              </Button>
-            )}
             <Button variant="destructive" size="sm" onClick={() => setShowLeave(true)} className="shrink-0">
               <LogOut className="size-3.5 mr-1.5" />
               Leave Meeting
@@ -933,7 +910,7 @@ export default function MeetingDetail() {
                           )}
                           {!connected && !memberDeclined && (
                             <p className="text-[11px] text-amber-700 mt-0.5">
-                              Ignored by scheduler until Google Calendar is connected.
+                              Google Calendar disconnected — reconnect in Settings.
                             </p>
                           )}
                         </div>

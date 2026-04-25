@@ -3,16 +3,15 @@ import { doc, getDoc, setDoc, deleteDoc, deleteField } from 'firebase/firestore'
 import {
   deleteUser,
   EmailAuthProvider,
-  GoogleAuthProvider,
   getIdTokenResult,
   reauthenticateWithCredential,
-  signInWithPopup,
   updatePassword,
 } from 'firebase/auth'
 import { RefreshCcw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
-import { db, auth, googleProvider } from '@/lib/firebase'
+import { db, auth } from '@/lib/firebase'
+import { connectGoogleCalendar } from '@/lib/googleCalendarAuth'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -253,7 +252,7 @@ export default function Settings() {
         setNotifyMeetingCreated(s.notifyMeetingCreated ?? true)
         setNotifyMeetingChanged(s.notifyMeetingChanged ?? true)
         setNotifyMeetingCancelled(s.notifyMeetingCancelled ?? true)
-        setGoogleCalendarConnected(Boolean(data.googleAccessToken || data.googleRefreshToken))
+        setGoogleCalendarConnected(Boolean(data.googleRefreshToken) && !Boolean(data.calendarDisconnected))
 
         persistedSettingsRef.current = {
           bufferMinutes: s.bufferMinutes ?? DEFAULT_SETTINGS.bufferMinutes,
@@ -371,38 +370,12 @@ export default function Settings() {
     if (!user) return
     setSyncingCalendar(true)
     try {
-      const result = await signInWithPopup(auth, googleProvider)
-      const popupEmail = result.user.email?.toLowerCase()
-      const accountEmail = user.email?.toLowerCase()
-      if (popupEmail && accountEmail && popupEmail !== accountEmail) {
-        toast.error('Use the Google account that matches your Chronos account.')
-        return
-      }
-      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken
-      if (!accessToken) {
-        toast.error('Unable to get Google Calendar access. Please try again.')
-        return
-      }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tokenResponse = (result as any)._tokenResponse
-      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
-      const expiresIn = parseInt(tokenResponse?.expiresIn ?? '3600', 10)
-      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000)
-
-      await setDoc(
-        doc(db, 'users', user.uid),
-        {
-          googleAccessToken: accessToken,
-          tokenExpiresAt,
-          ...(refreshToken ? { googleRefreshToken: refreshToken } : {}),
-          tokenUpdatedAt: new Date(),
-        },
-        { merge: true }
-      )
+      await connectGoogleCalendar()
       setGoogleCalendarConnected(true)
       toast.success('Google Calendar connected.')
-    } catch {
-      toast.error('Google Calendar reconnect failed. Please try again.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Google Calendar reconnect failed.'
+      toast.error(message)
     } finally {
       setSyncingCalendar(false)
     }

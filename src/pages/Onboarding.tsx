@@ -6,6 +6,7 @@ import { Popover } from '@base-ui/react/popover'
 import { addMonths, format, startOfMonth } from 'date-fns'
 import { CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import { auth, db } from '@/lib/firebase'
+import { connectGoogleCalendar } from '@/lib/googleCalendarAuth'
 import { useAuthStore } from '@/store/authStore'
 import Avatar from '@/components/Avatar'
 import { Calendar } from '@/components/ui/calendar'
@@ -83,6 +84,7 @@ export default function Onboarding() {
   const [bufferMinutes, setBufferMinutes] = useState(15)
   const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone)
   const [saving, setSaving] = useState(false)
+  const [calendarConnected, setCalendarConnected] = useState(false)
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (user) => {
@@ -119,6 +121,7 @@ export default function Onboarding() {
           setBufferMinutes(s.bufferMinutes ?? 15)
           setTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
         }
+        if (d.googleRefreshToken) setCalendarConnected(true)
       }
       setAuthReady(true)
     })
@@ -184,6 +187,7 @@ export default function Onboarding() {
     step === 2 ? dateOfBirth !== '' && !dobTooYoung :
     step === 5 ? workDays.length > 0 :
     step === 6 ? workHoursValid :
+    step === 8 ? calendarConnected :
     true
 
   if (!authReady) {
@@ -247,7 +251,12 @@ export default function Onboarding() {
           />
         )}
         {step === 7 && <StepTimezone timezone={timezone} setTimezone={setTimezone} />}
-        {step === 8 && <StepCalendar />}
+        {step === 8 && (
+          <StepCalendar
+            isConnected={calendarConnected}
+            onConnected={() => setCalendarConnected(true)}
+          />
+        )}
 
         <div className="flex items-center justify-between mt-8">
           {step > 1 ? (
@@ -730,23 +739,74 @@ function GoogleCalendarIcon({ className }: { className?: string }) {
   )
 }
 
-function StepCalendar() {
+function StepCalendar({
+  isConnected,
+  onConnected,
+}: {
+  isConnected: boolean
+  onConnected: () => void
+}) {
+  const [connecting, setConnecting] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleConnect = async () => {
+    if (!user) return
+    setConnecting(true)
+    setError('')
+    try {
+      await connectGoogleCalendar()
+      onConnected()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to connect Google Calendar.'
+      setError(message)
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  if (isConnected) {
+    return (
+      <div className="flex flex-col gap-5">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight">Your Google Calendar is connected</h2>
+          <p className="text-sm text-muted-foreground mt-1">Chronos is ready to start scheduling.</p>
+        </div>
+        <div className="flex flex-col items-center gap-3 py-6">
+          <div className="w-16 h-16 flex items-center justify-center">
+            <GoogleCalendarIcon className="w-14 h-14" />
+          </div>
+          <div className="text-center max-w-xs">
+            <p className="text-sm font-medium">Calendar access granted</p>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              Chronos will read your events to better understand your availability and send calendar
+              invites to your inbox when meetings are booked.
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <h2 className="text-xl font-bold tracking-tight">Your Google Calendar is connected</h2>
-        <p className="text-sm text-muted-foreground mt-1">Chronos is ready to start scheduling.</p>
+        <h2 className="text-xl font-bold tracking-tight">Connect Google Calendar</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Chronos needs access to your Google Calendar to find available times and book meetings.
+        </p>
       </div>
-      <div className="flex flex-col items-center gap-3 py-6">
+      <div className="flex flex-col items-center gap-4 py-6">
         <div className="w-16 h-16 flex items-center justify-center">
           <GoogleCalendarIcon className="w-14 h-14" />
         </div>
-        <div className="text-center max-w-xs">
-          <p className="text-sm font-medium">Calendar access granted</p>
-          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-            Chronos will read your events to better understand your availability and send calendar
-            invites to your inbox when meetings are booked.
+        <div className="text-center max-w-xs flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Chronos will read your calendar events to check availability and create meeting invites on your behalf.
           </p>
+          <Button onClick={handleConnect} disabled={connecting}>
+            {connecting ? 'Connecting...' : 'Connect Google Calendar'}
+          </Button>
+          {error && <p className="text-xs text-destructive">{error}</p>}
         </div>
       </div>
     </div>

@@ -7,6 +7,7 @@ const Login = lazy(() => import('@/pages/Login'))
 const AuthAction = lazy(() => import('@/pages/AuthAction'))
 const Onboarding = lazy(() => import('@/pages/Onboarding'))
 const Join = lazy(() => import('@/pages/Join'))
+const GoogleCalendarCallback = lazy(() => import('@/pages/GoogleCalendarCallback'))
 const ProtectedRoute = lazy(() => import('@/components/ProtectedRoute'))
 const AppLayout = lazy(() => import('@/components/AppLayout'))
 const Dashboard = lazy(() => import('@/pages/app/Dashboard'))
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/auth/action" element={<Suspense fallback={<PageFallback />}><AuthAction /></Suspense>} />
         <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><Onboarding /></Suspense>} />
         <Route path="/join/:id" element={<Suspense fallback={<PageFallback />}><Join /></Suspense>} />
+        <Route path="/auth/google/callback" element={<Suspense fallback={<PageFallback />}><GoogleCalendarCallback /></Suspense>} />
         <Route
           path="/app"
           element={

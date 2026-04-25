@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import firebase_admin
 import sentry_sdk
 from firebase_admin import firestore as admin_firestore
-from firebase_functions import https_fn, scheduler_fn
+from firebase_functions import https_fn
 
 from scheduling.algorithm import find_meeting_slots
 
@@ -21,7 +21,6 @@ if _sentry_dsn:
     )
 
 SLOT_INTERVAL_MINUTES = 15
-REMINDER_TOLERANCE_MINUTES = 20
 
 if not firebase_admin._apps:
     firebase_admin.initialize_app()
@@ -101,10 +100,15 @@ def _add_one_month(dt: datetime) -> datetime:
     return dt.replace(year=year, month=month, day=day)
 
 
+class _InvalidGrantError(Exception):
+    """Raised when Google rejects a refresh token as permanently invalid (revoked/expired)."""
+
+
 def _refresh_access_token(refresh_token: str) -> tuple[str, int] | None:
     """Exchange a Google OAuth refresh token for a new access token.
 
-    Returns (access_token, expires_in_seconds) or None on failure.
+    Returns (access_token, expires_in_seconds) on success, None on transient failure.
+    Raises _InvalidGrantError when Google returns invalid_grant (token permanently revoked).
     """
     client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
     client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
@@ -131,6 +135,14 @@ def _refresh_access_token(refresh_token: str) -> tuple[str, int] | None:
             if not token:
                 return None
             return (token, int(data.get('expires_in', 3600)))
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode())
+        except Exception:
+            body = {}
+        if body.get('error') == 'invalid_grant':
+            raise _InvalidGrantError()
+        return None
     except Exception:
         return None
 
@@ -154,12 +166,21 @@ def _resolve_access_token(
     # Skip the refresh network call if the token is comfortably valid (>5 min left).
     if access_token and token_expires_at is not None:
         now = datetime.now(timezone.utc)
-        expires = token_expires_at
-        if getattr(expires, 'tzinfo', None) is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if (expires - now).total_seconds() > 300:
-            return access_token
+        # Handle Firestore Timestamp objects
+        if hasattr(token_expires_at, 'to_pydatetime'):
+            expires = token_expires_at.to_pydatetime()
+        elif isinstance(token_expires_at, datetime):
+            expires = token_expires_at
+        else:
+            expires = None
+        
+        if expires is not None:
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if (expires - now).total_seconds() > 300:
+                return access_token
 
+    # Let _InvalidGrantError propagate — callers must catch and set calendarDisconnected.
     result = _refresh_access_token(refresh_token)
     if not result:
         return access_token
@@ -296,7 +317,12 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         token_expires_at = user_data.get('tokenExpiresAt')
         display_name = user_data.get('displayName', uid)
 
-        access_token = _resolve_access_token(client, uid, access_token, refresh_token, token_expires_at)
+        try:
+            access_token = _resolve_access_token(client, uid, access_token, refresh_token, token_expires_at)
+        except _InvalidGrantError:
+            client.collection('users').document(uid).update({'calendarDisconnected': True})
+            ignored_members.append(display_name)
+            continue
 
         if not access_token:
             ignored_members.append(display_name)
@@ -306,7 +332,12 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
 
         # Token was rejected despite proactive refresh — one last forced retry.
         if busy is None and refresh_token:
-            retry = _refresh_access_token(refresh_token)
+            try:
+                retry = _refresh_access_token(refresh_token)
+            except _InvalidGrantError:
+                client.collection('users').document(uid).update({'calendarDisconnected': True})
+                ignored_members.append(display_name)
+                continue
             if retry:
                 new_token, expires_in = retry
                 new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
@@ -386,11 +417,6 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
 
     return result
 
-
-@https_fn.on_call()
-def schedule_meetings(req: https_fn.CallableRequest) -> dict:
-    """Compatibility alias that keeps the legacy plural callable name available."""
-    return schedule_meeting(req)
 
 
 def _create_calendar_event(
@@ -511,138 +537,6 @@ def _send_resend_email(to_email: str, subject: str, html: str, reply_to: str | N
         print(f'Reminder email send failed for {to_email}: {e}')
         return False
 
-
-def _build_reminder_email_html(
-    meeting_name: str,
-    slot_start: datetime,
-    slot_end: datetime,
-    reminder_type: str,
-    meeting_link: str = '',
-) -> str:
-    reminder_label = 'in 24 hours' if reminder_type == '24h' else 'in 1 hour'
-    start_label = slot_start.strftime('%Y-%m-%d %H:%M UTC')
-    end_label = slot_end.strftime('%H:%M UTC')
-    join_link_html = ''
-    if meeting_link:
-        join_link_html = f'<p><strong>Join:</strong> <a href="{meeting_link}">{meeting_link}</a></p>'
-
-    return (
-        f'<p>This is a reminder that <strong>{meeting_name}</strong> starts {reminder_label}.</p>'
-        f'<p><strong>When:</strong> {start_label} to {end_label}</p>'
-        f'{join_link_html}'
-        '<p>Open Chronos to view meeting details and join link.</p>'
-    )
-
-
-@scheduler_fn.on_schedule(schedule='every 15 minutes')
-def send_meeting_email_reminders(event: scheduler_fn.ScheduledEvent) -> None:
-    """Send 24-hour and 1-hour reminder emails based on per-user reminder settings."""
-    client = _get_db()
-    now_utc = datetime.now(timezone.utc)
-    tolerance = timedelta(minutes=REMINDER_TOLERANCE_MINUTES)
-
-    sent_count = 0
-    skipped_missing_provider = 0
-
-    meetings = client.collection('meetings').where('status', '==', 'scheduled').stream()
-
-    for meeting_doc in meetings:
-        meeting = meeting_doc.to_dict() or {}
-        scheduled_slot = meeting.get('scheduledSlot') or {}
-        slot_start_raw = scheduled_slot.get('start')
-        slot_end_raw = scheduled_slot.get('end')
-
-        if not slot_start_raw or not slot_end_raw:
-            continue
-
-        try:
-            slot_start = _parse_iso_to_utc(slot_start_raw)
-            slot_end = _parse_iso_to_utc(slot_end_raw)
-        except ValueError:
-            continue
-
-        if slot_start <= now_utc:
-            continue
-
-        delta = slot_start - now_utc
-        is_due_24h = abs(delta - timedelta(hours=24)) <= tolerance
-        is_due_1h = abs(delta - timedelta(hours=1)) <= tolerance
-        if not is_due_24h and not is_due_1h:
-            continue
-
-        member_uids = meeting.get('memberUids') or []
-        if not member_uids:
-            continue
-
-        reminders_sent = meeting.get('remindersSent') or {}
-        already_sent_24h = set(reminders_sent.get('24h', []))
-        already_sent_1h = set(reminders_sent.get('1h', []))
-
-        just_sent_24h: list[str] = []
-        just_sent_1h: list[str] = []
-
-        for uid in member_uids:
-            user_doc = client.collection('users').document(uid).get()
-            if not user_doc.exists:
-                continue
-
-            user_data = user_doc.to_dict() or {}
-            email = (user_data.get('email') or '').strip()
-            settings = user_data.get('settings') or {}
-
-            if not email:
-                continue
-
-            should_send_24h = bool(settings.get('emailReminderTwentyFourHours')) and is_due_24h and uid not in already_sent_24h
-            should_send_1h = bool(settings.get('emailReminderOneHour')) and is_due_1h and uid not in already_sent_1h
-
-            if should_send_24h:
-                subject = f'Reminder: {meeting.get("name", "Meeting")} starts in 24 hours'
-                html = _build_reminder_email_html(
-                    meeting.get('name', 'Meeting'),
-                    slot_start,
-                    slot_end,
-                    '24h',
-                    meeting.get('meetingLink') or '',
-                )
-                if _send_resend_email(email, subject, html):
-                    just_sent_24h.append(uid)
-                    sent_count += 1
-                else:
-                    skipped_missing_provider += 1
-
-            if should_send_1h:
-                subject = f'Reminder: {meeting.get("name", "Meeting")} starts in 1 hour'
-                html = _build_reminder_email_html(
-                    meeting.get('name', 'Meeting'),
-                    slot_start,
-                    slot_end,
-                    '1h',
-                    meeting.get('meetingLink') or '',
-                )
-                if _send_resend_email(email, subject, html):
-                    just_sent_1h.append(uid)
-                    sent_count += 1
-                else:
-                    skipped_missing_provider += 1
-
-        updates: dict = {}
-        if just_sent_24h:
-            updates['remindersSent.24h'] = admin_firestore.ArrayUnion(just_sent_24h)
-        if just_sent_1h:
-            updates['remindersSent.1h'] = admin_firestore.ArrayUnion(just_sent_1h)
-        if updates:
-            updates['reminderLastProcessedAt'] = admin_firestore.SERVER_TIMESTAMP
-            client.collection('meetings').document(meeting_doc.id).update(updates)
-
-    print(
-        'Reminder job finished',
-        {
-            'jobName': event.job_name,
-            'sentCount': sent_count,
-            'skippedMissingProvider': skipped_missing_provider,
-        },
-    )
 
 
 def _build_booking_confirmation_html(
@@ -860,11 +754,6 @@ def book_meeting(req: https_fn.CallableRequest) -> dict:
     )
 
 
-@https_fn.on_call()
-def book_meetings(req: https_fn.CallableRequest) -> dict:
-    """Compatibility alias that keeps the legacy plural callable name available."""
-    return book_meeting(req)
-
 
 @https_fn.on_call()
 def cancel_booking(req: https_fn.CallableRequest) -> dict:
@@ -980,99 +869,14 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
     return {'success': True}
 
 
-@https_fn.on_call()
-def decline_meeting(req: https_fn.CallableRequest) -> dict:
-    """Mark a participant as having declined a meeting and notify all other members."""
-    if req.auth is None:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
-            message='You must be signed in to decline a meeting.',
-        )
-
-    uid = req.auth.uid
-    meeting_id = (req.data.get('meetingId') or '').strip()
-    if not meeting_id:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
-            message='meetingId is required.',
-        )
-
-    client = _get_db()
-    meeting_doc = client.collection('meetings').document(meeting_id).get()
-    if not meeting_doc.exists:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.NOT_FOUND,
-            message='Meeting not found.',
-        )
-
-    meeting_data = meeting_doc.to_dict() or {}
-    member_uids: list[str] = meeting_data.get('memberUids') or []
-    if uid not in member_uids:
-        raise https_fn.HttpsError(
-            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
-            message='You are not a participant of this meeting.',
-        )
-
-    summary: str = meeting_data.get('name', 'Meeting')
-    host_uid: str = meeting_data.get('hostUid', '')
-    members: list[dict] = meeting_data.get('members') or []
-
-    # Fetch decliner's display name.
-    decliner_doc = client.collection('users').document(uid).get()
-    decliner_data = decliner_doc.to_dict() or {} if decliner_doc.exists else {}
-    decliner_name: str = decliner_data.get('displayName') or 'A participant'
-
-    # Mark the meeting as declined by this participant.
-    client.collection('meetings').document(meeting_id).update({
-        'declinedByUids': admin_firestore.ArrayUnion([uid]),
-    })
-
-    # Delete their Google Calendar event if one exists.
-    calendar_event_ids: dict = meeting_data.get('calendarEventIds') or {}
-    event_id: str = calendar_event_ids.get(uid, '')
-    if event_id:
-        access_token: str = decliner_data.get('googleAccessToken', '')
-        refresh_token: str = decliner_data.get('googleRefreshToken', '')
-        token_expires_at = decliner_data.get('tokenExpiresAt')
-        access_token = _resolve_access_token(client, uid, access_token, refresh_token, token_expires_at)
-        if access_token:
-            _delete_calendar_event(access_token, event_id)
-
-    # Notify all other participants by email.
-    try:
-        host_email: str = ''
-        for member in members:
-            if member.get('uid') == host_uid:
-                host_email = (member.get('email') or '').strip()
-                break
-        if not host_email:
-            host_doc = client.collection('users').document(host_uid).get()
-            if host_doc.exists:
-                host_email = (host_doc.to_dict() or {}).get('email', '')
-
-        subject = f'Meeting update: {summary}'
-        html = (
-            f'<p><strong>{decliner_name}</strong> has declined the meeting <strong>{summary}</strong>.</p>'
-            f'<p>You may want to reschedule or reach out to the host for next steps.</p>'
-        )
-        for member in members:
-            member_uid = member.get('uid', '')
-            member_email = (member.get('email') or '').strip()
-            if member_uid == uid or not member_email:
-                continue
-            _send_resend_email(member_email, subject, html, reply_to=host_email or None)
-    except Exception as e:
-        print(f'Decline notification email failed: {e}')
-
-    return {'success': True}
-
 
 @https_fn.on_call()
 def refresh_meeting_tokens(req: https_fn.CallableRequest) -> dict:
-    """Refresh Google OAuth tokens for all meeting participants and return connection status.
+    """Return calendar connection status for all meeting participants.
 
-    Called from the MeetingDetail page on load so the frontend always shows
-    accurate calendar-connected state and tokens in Firestore are kept fresh.
+    Reads Firestore only — no Google API calls. A participant is connected when
+    they have a googleRefreshToken stored and calendarDisconnected is not True.
+    The actual token refresh happens lazily inside schedule_meeting.
     """
     if req.auth is None:
         raise https_fn.HttpsError(
@@ -1104,38 +908,99 @@ def refresh_meeting_tokens(req: https_fn.CallableRequest) -> dict:
             connection_status[uid] = False
             continue
         udata = user_doc.to_dict() or {}
-        access_token: str = udata.get('googleAccessToken', '')
-        refresh_token: str = udata.get('googleRefreshToken', '')
-        token_expires_at = udata.get('tokenExpiresAt')
-
-        if not refresh_token:
-            # User never connected calendar or explicitly disconnected.
-            connection_status[uid] = False
-            continue
-
-        # If the stored access token has clearly has time remaining, no network call needed.
-        if access_token and token_expires_at is not None:
-            now = datetime.now(timezone.utc)
-            expires = token_expires_at
-            if getattr(expires, 'tzinfo', None) is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-            if (expires - now).total_seconds() > 300:
-                connection_status[uid] = True
-                continue
-
-        # Token is expired or near-expiry — attempt a real refresh to confirm connectivity.
-        result = _refresh_access_token(refresh_token)
-        if result:
-            new_token, expires_in = result
-            new_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-            client.collection('users').document(uid).update({
-                'googleAccessToken': new_token,
-                'tokenExpiresAt': new_expires_at,
-                'tokenUpdatedAt': datetime.now(timezone.utc),
-            })
-            connection_status[uid] = True
-        else:
-            # Refresh failed — token is expired or revoked. User must reconnect in Settings.
-            connection_status[uid] = False
+        has_refresh_token = bool(udata.get('googleRefreshToken'))
+        is_disconnected = bool(udata.get('calendarDisconnected'))
+        connection_status[uid] = has_refresh_token and not is_disconnected
 
     return {'connectionStatus': connection_status}
+
+
+@https_fn.on_call()
+def connect_google_calendar(req: https_fn.CallableRequest) -> dict:
+    """Exchange a Google OAuth authorization code for tokens and store them in Firestore.
+
+    The frontend obtains the authorization code via the OAuth popup flow and passes
+    it here. The backend exchanges it server-side (keeping client_secret off the browser)
+    and stores the resulting access_token and refresh_token. This guarantees a valid
+    refresh_token is always stored, unlike the signInWithPopup approach.
+    """
+    if req.auth is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in.',
+        )
+
+    code: str = (req.data.get('code') or '').strip()
+    redirect_uri: str = (req.data.get('redirectUri') or '').strip()
+
+    if not code or not redirect_uri:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='code and redirectUri are required.',
+        )
+
+    client_id = os.environ.get('GOOGLE_CLIENT_ID', '')
+    client_secret = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+    if not client_id or not client_secret:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message='Server configuration error.',
+        )
+
+    payload = urllib.parse.urlencode({
+        'code': code,
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'redirect_uri': redirect_uri,
+        'grant_type': 'authorization_code',
+    }).encode('utf-8')
+
+    token_req = urllib.request.Request(
+        'https://oauth2.googleapis.com/token',
+        data=payload,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'},
+        method='POST',
+    )
+
+    try:
+        with urllib.request.urlopen(token_req, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read().decode())
+        except Exception:
+            body = {}
+        print(f'connect_google_calendar token exchange failed: {e.code} {body}')
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='Failed to exchange authorization code. Please try again.',
+        )
+    except Exception as e:
+        print(f'connect_google_calendar token exchange error: {e}')
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message='Token exchange failed.',
+        )
+
+    access_token = data.get('access_token', '')
+    refresh_token = data.get('refresh_token', '')
+    expires_in = int(data.get('expires_in', 3600))
+
+    if not access_token:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INTERNAL,
+            message='No access token returned from Google.',
+        )
+
+    db_client = _get_db()
+    update: dict = {
+        'googleAccessToken': access_token,
+        'tokenExpiresAt': datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+        'tokenUpdatedAt': datetime.now(timezone.utc),
+        'calendarDisconnected': False,
+    }
+    if refresh_token:
+        update['googleRefreshToken'] = refresh_token
+
+    db_client.collection('users').document(req.auth.uid).set(update, merge=True)
+    return {'success': True}
