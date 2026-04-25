@@ -9,8 +9,9 @@ Chronos is a full-stack web application that automatically schedules meetings on
   <img width=49% height=49% alt="Screenshot 2026-04-21 113730" src="https://github.com/user-attachments/assets/04e67086-0890-4904-b0e1-68fc90415d07" />
 </p>
 <p>
-  <img width=49% height=49% alt="Screenshot 2026-04-21 130909" src="https://github.com/user-attachments/assets/ecc93f28-6baa-4770-a071-bca9b9a9e71b" />
-  <img width=49% height=49% alt="Screenshot 2026-04-21 221529" src="https://github.com/user-attachments/assets/11cfa6d2-8915-4370-99d7-9a31145472f7" />
+  <img width=49% height=49% alt="Screenshot 2026-04-25 132822" src="https://github.com/user-attachments/assets/9e2f4ce7-7969-425a-b774-16e3cd96caed" />
+  <img width=49% height=49% alt="Screenshot 2026-04-25 132848" src="https://github.com/user-attachments/assets/a7d46bab-3b7c-40d8-a6e4-5d6417347dd7" />
+
 
 
 </p>
