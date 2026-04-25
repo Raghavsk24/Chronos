@@ -333,9 +333,9 @@ export default function LobbyDetail() {
               { label: 'Meetings', value: String(meetings.length) },
               { label: 'Members', value: String(lobby.memberUids.length) },
             ].map(({ label, value }) => (
-              <span key={label} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs">
-                <span className="font-semibold text-black">{label}:</span>
-                <span className="text-black">{value}</span>
+              <span key={label} className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs">
+                <span className="font-semibold text-[#1B2A4A]">{label}:</span>
+                <span className="text-[#1B2A4A]">{value}</span>
               </span>
             ))}
           </div>

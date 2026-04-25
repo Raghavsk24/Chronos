@@ -471,7 +471,7 @@ export default function MeetingDetail() {
   const handleSaveSettings = async () => {
     if (!meeting || !settingsForm.name.trim()) return
     if (!isValidMeetingLink(settingsForm.meetingLink)) {
-      toast.error('Meeting link must be a valid URL from a supported platform (Google Meet, Zoom, Teams, etc.).')
+      toast.error('Meeting link is invalid.')
       return
     }
     setSavingSettings(true)
@@ -638,10 +638,10 @@ export default function MeetingDetail() {
           ].map(({ label, value }) => (
             <span
               key={label}
-              className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs"
+              className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs"
             >
-              <span className="font-semibold text-black">{label}:</span>
-              <span className="text-black">{value}</span>
+              <span className="font-semibold text-[#1B2A4A]">{label}:</span>
+              <span className="text-[#1B2A4A]">{value}</span>
             </span>
           ))}
         </div>
@@ -986,7 +986,7 @@ export default function MeetingDetail() {
                   className={settingsForm.meetingLink && !isValidMeetingLink(settingsForm.meetingLink) ? 'border-destructive focus-visible:ring-destructive' : ''}
                 />
                 {settingsForm.meetingLink && !isValidMeetingLink(settingsForm.meetingLink) && (
-                  <p className="text-xs text-destructive">Must be a Google Meet, Zoom, Teams, or other supported meeting link.</p>
+                  <p className="text-xs text-destructive">Meeting link is invalid.</p>
                 )}
               </div>
             </div>

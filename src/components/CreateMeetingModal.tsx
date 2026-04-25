@@ -115,7 +115,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
   const handleCreate = async () => {
     if (!selectedLobbyId || !meetingName.trim() || !user) return
     if (!isValidMeetingLink(meetingLink)) {
-      toast.error('Meeting link must be a valid URL from a supported platform (Google Meet, Zoom, Teams, etc.).')
+      toast.error('Meeting link is invalid.')
       return
     }
     setLoading(true)
@@ -252,7 +252,7 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
                   className={meetingLink && !isValidMeetingLink(meetingLink) ? 'border-destructive focus-visible:ring-destructive' : ''}
                 />
                 {meetingLink && !isValidMeetingLink(meetingLink) && (
-                  <p className="text-xs text-destructive">Must be a Google Meet, Zoom, Teams, or other supported meeting link.</p>
+                  <p className="text-xs text-destructive">Meeting link is invalid.</p>
                 )}
               </div>
             </div>
