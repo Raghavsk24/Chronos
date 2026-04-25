@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { arrayRemove, arrayUnion, doc, getDoc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore'
+import { arrayRemove, arrayUnion, doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { format } from 'date-fns'
 import { toast } from 'sonner'
-import { ArrowLeft, ExternalLink, CheckCircle2, CircleHelp, Settings, Trash2, LogOut, RotateCcw, X, UserPlus, XCircle } from 'lucide-react'
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth'
-import { db, functions, auth, googleProvider } from '@/lib/firebase'
+import { ArrowLeft, ExternalLink, CheckCircle2, CircleHelp, Settings, Trash2, LogOut, RotateCcw, X, CirclePlus, XCircle } from 'lucide-react'
+import { db, functions } from '@/lib/firebase'
+import { connectGoogleCalendar } from '@/lib/googleCalendarAuth'
 import { useAuthStore } from '@/store/authStore'
 import Avatar from '@/components/Avatar'
 import { Badge } from '@/components/ui/badge'
@@ -144,8 +144,8 @@ export default function MeetingDetail() {
   const [bookingError, setBookingError] = useState('')
   const [completing, setCompleting] = useState(false)
   const [rebooking, setRebooking] = useState(false)
-  const [calendarConnectionReady, setCalendarConnectionReady] = useState(false)
-  const [calendarConnectionReason, setCalendarConnectionReason] = useState('Checking Google Calendar connection...')
+  const [calendarConnectionReady, setCalendarConnectionReady] = useState(true)
+  const [calendarConnectionReason, setCalendarConnectionReason] = useState('')
   const [calendarConnectionByUid, setCalendarConnectionByUid] = useState<Record<string, boolean>>({})
   const [coverageSummary, setCoverageSummary] = useState<CoverageSummary | null>(null)
 
@@ -308,8 +308,8 @@ export default function MeetingDetail() {
 
   const handleFindSlots = async () => {
     if (!meeting) return
-    if (!calendarConnectionReady) {
-      setScheduleError(calendarConnectionReason)
+    if (calendarConnectionReady !== true) {
+      setScheduleError(calendarConnectionReason || 'Google Calendar connection is still being verified.')
       toast.error('Reconnect Google Calendar in Settings before scheduling.')
       return
     }
@@ -534,34 +534,15 @@ export default function MeetingDetail() {
   }
 
   const handleReconnectCalendar = async () => {
-    if (!user || !meetingId) return
     setReconnectingCalendar(true)
     try {
-      const result = await signInWithPopup(auth, googleProvider)
-      const accessToken = GoogleAuthProvider.credentialFromResult(result)?.accessToken ?? ''
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const tokenResponse = (result as any)._tokenResponse
-      const refreshToken: string = tokenResponse?.oauthRefreshToken ?? tokenResponse?.refreshToken ?? ''
-      const expiresIn = parseInt(tokenResponse?.expiresIn ?? '3600', 10)
-      const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000)
-
-      if (!accessToken) {
-        toast.error('Unable to get Google Calendar access. Please try again.')
-        return
-      }
-
-      await setDoc(doc(db, 'users', user.uid), {
-        googleAccessToken: accessToken,
-        tokenExpiresAt,
-        tokenUpdatedAt: new Date(),
-        ...(refreshToken ? { googleRefreshToken: refreshToken } : {}),
-      }, { merge: true })
-
+      await connectGoogleCalendar()
       const participantUids = meeting?.memberUids ?? meeting?.members?.map((m) => m.uid) ?? []
       await refreshCalendarStatuses(participantUids, meetingId)
       toast.success('Google Calendar reconnected.')
-    } catch {
-      toast.error('Google Calendar reconnect failed. Please try again.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Google Calendar reconnect failed.'
+      toast.error(message)
     } finally {
       setReconnectingCalendar(false)
     }
@@ -741,7 +722,7 @@ export default function MeetingDetail() {
           </div>
         ) : isHost ? (
           <>
-            {!calendarConnectionReady && (
+            {calendarConnectionReady === false && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex items-start justify-between gap-3">
                 <p className="text-xs text-amber-800">{calendarConnectionReason}</p>
                 <Button
@@ -764,7 +745,7 @@ export default function MeetingDetail() {
                 </p>
               </div>
               <div className="shrink-0">
-                <Button onClick={handleFindSlots} disabled={finding || booking || !calendarConnectionReady}>
+                <Button onClick={handleFindSlots} disabled={finding || booking || calendarConnectionReady !== true}>
                   {finding ? 'Searching...' : 'Find Meeting Times'}
                 </Button>
               </div>
@@ -878,8 +859,7 @@ export default function MeetingDetail() {
                 className="flex items-center gap-1 text-xs text-primary hover:underline"
                 title="Add participant from lobby"
               >
-                <UserPlus className="size-3.5" />
-                Add
+                <CirclePlus className="size-[22px]" />
               </button>
             )}
           </div>
@@ -908,7 +888,7 @@ export default function MeetingDetail() {
                           {memberDeclined && (
                             <p className="text-[11px] text-[var(--status-declined-fg)] mt-0.5">Declined</p>
                           )}
-                          {!connected && !memberDeclined && (
+                          {connected === false && !memberDeclined && (
                             <p className="text-[11px] text-amber-700 mt-0.5">
                               Google Calendar disconnected — reconnect in Settings.
                             </p>
@@ -1220,18 +1200,18 @@ export default function MeetingDetail() {
       {/* Cancel scheduled meeting */}
       <Dialog open={showCancelMeeting} onOpenChange={setShowCancelMeeting}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Cancel this booking?</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Cancel this meeting?</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This will remove <strong>{meeting.name}</strong> from all participants' Google Calendars and send a cancellation email. The meeting will return to scheduling so you can pick a new time.
+            This will permanently delete <strong>{meeting.name}</strong>, remove it from all participants' Google Calendars, and send a cancellation email. This cannot be undone.
           </p>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCancelMeeting(false)} disabled={rebooking}>Back</Button>
+            <Button variant="outline" onClick={() => setShowCancelMeeting(false)} disabled={acting}>Back</Button>
             <Button
               variant="destructive"
-              onClick={async () => { setShowCancelMeeting(false); await handleRebook() }}
-              disabled={rebooking}
+              onClick={async () => { setShowCancelMeeting(false); await handleDeleteMeeting() }}
+              disabled={acting}
             >
-              {rebooking ? 'Cancelling...' : 'Cancel booking'}
+              {acting ? 'Cancelling...' : 'Cancel meeting'}
             </Button>
           </DialogFooter>
         </DialogContent>

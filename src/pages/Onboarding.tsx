@@ -750,7 +750,6 @@ function StepCalendar({
   const [error, setError] = useState('')
 
   const handleConnect = async () => {
-    if (!user) return
     setConnecting(true)
     setError('')
     try {

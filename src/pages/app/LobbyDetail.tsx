@@ -113,7 +113,7 @@ export default function LobbyDetail() {
     const [lobbySnap, userSnap, meetingsSnap] = await Promise.all([
       getDoc(doc(db, 'lobbies', id)),
       getDoc(doc(db, 'users', user.uid)),
-      getDocs(query(collection(db, 'meetings'), where('lobbyId', '==', id))),
+      getDocs(query(collection(db, 'meetings'), where('lobbyId', '==', id), where('memberUids', 'array-contains', user.uid))),
     ])
     if (!lobbySnap.exists()) { navigate('/app/lobbies'); return }
     setLobby({ id: lobbySnap.id, ...lobbySnap.data() } as Lobby)
@@ -280,7 +280,7 @@ export default function LobbyDetail() {
   const isHost = user?.uid === lobby.hostUid
 
   return (
-    <div className="flex flex-col h-full min-h-0 overflow-y-auto">
+    <div className="h-[calc(100vh-3.5rem)] overflow-y-auto">
 
       {/* Sticky top nav */}
       <div className="sticky top-0 z-10 bg-background border-b px-6 py-3 flex items-center justify-between">

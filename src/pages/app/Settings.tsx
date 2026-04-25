@@ -84,8 +84,6 @@ interface PersistedSettingsSnapshot {
   workEnd: string
   workDays: number[]
   timezone: string
-  emailReminderOneHour: boolean
-  emailReminderTwentyFourHours: boolean
   notifyMeetingCreated: boolean
   notifyMeetingChanged: boolean
   notifyMeetingCancelled: boolean
@@ -169,8 +167,6 @@ export default function Settings() {
   const [workEnd, setWorkEnd] = useState(DEFAULT_SETTINGS.workEnd)
   const [workDays, setWorkDays] = useState<number[]>(DEFAULT_SETTINGS.workDays)
   const [timezone, setTimezone] = useState('')
-  const [emailReminderOneHour, setEmailReminderOneHour] = useState(false)
-  const [emailReminderTwentyFourHours, setEmailReminderTwentyFourHours] = useState(false)
   const [notifyMeetingCreated, setNotifyMeetingCreated] = useState(true)
   const [notifyMeetingChanged, setNotifyMeetingChanged] = useState(true)
   const [notifyMeetingCancelled, setNotifyMeetingCancelled] = useState(true)
@@ -198,8 +194,6 @@ export default function Settings() {
     workEnd: DEFAULT_SETTINGS.workEnd,
     workDays: DEFAULT_SETTINGS.workDays,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    emailReminderOneHour: false,
-    emailReminderTwentyFourHours: false,
     notifyMeetingCreated: true,
     notifyMeetingChanged: true,
     notifyMeetingCancelled: true,
@@ -247,8 +241,6 @@ export default function Settings() {
         setWorkEnd(toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0))
         setWorkDays(s.workDays ?? DEFAULT_SETTINGS.workDays)
         setTimezone(s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone)
-        setEmailReminderOneHour(Boolean(s.emailReminderOneHour))
-        setEmailReminderTwentyFourHours(Boolean(s.emailReminderTwentyFourHours))
         setNotifyMeetingCreated(s.notifyMeetingCreated ?? true)
         setNotifyMeetingChanged(s.notifyMeetingChanged ?? true)
         setNotifyMeetingCancelled(s.notifyMeetingCancelled ?? true)
@@ -260,8 +252,6 @@ export default function Settings() {
           workEnd: toTimeString(s.workEndHour ?? 17, s.workEndMinute ?? 0),
           workDays: s.workDays ?? DEFAULT_SETTINGS.workDays,
           timezone: s.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
-          emailReminderOneHour: Boolean(s.emailReminderOneHour),
-          emailReminderTwentyFourHours: Boolean(s.emailReminderTwentyFourHours),
           notifyMeetingCreated: s.notifyMeetingCreated ?? true,
           notifyMeetingChanged: s.notifyMeetingChanged ?? true,
           notifyMeetingCancelled: s.notifyMeetingCancelled ?? true,
@@ -296,8 +286,6 @@ export default function Settings() {
       workEnd,
       workDays: [...workDays],
       timezone,
-      emailReminderOneHour,
-      emailReminderTwentyFourHours,
       notifyMeetingCreated,
       notifyMeetingChanged,
       notifyMeetingCancelled,
@@ -319,8 +307,6 @@ export default function Settings() {
     setWorkEnd(optimisticSettings.workEnd)
     setWorkDays(optimisticSettings.workDays)
     setTimezone(optimisticSettings.timezone)
-    setEmailReminderOneHour(optimisticSettings.emailReminderOneHour)
-    setEmailReminderTwentyFourHours(optimisticSettings.emailReminderTwentyFourHours)
     setNotifyMeetingCreated(optimisticSettings.notifyMeetingCreated)
     setNotifyMeetingChanged(optimisticSettings.notifyMeetingChanged)
     setNotifyMeetingCancelled(optimisticSettings.notifyMeetingCancelled)
@@ -338,8 +324,6 @@ export default function Settings() {
             workEndMinute: endMinute,
             workDays: optimisticSettings.workDays,
             timezone: optimisticSettings.timezone,
-            emailReminderOneHour: optimisticSettings.emailReminderOneHour,
-            emailReminderTwentyFourHours: optimisticSettings.emailReminderTwentyFourHours,
             notifyMeetingCreated: optimisticSettings.notifyMeetingCreated,
             notifyMeetingChanged: optimisticSettings.notifyMeetingChanged,
             notifyMeetingCancelled: optimisticSettings.notifyMeetingCancelled,
@@ -355,8 +339,6 @@ export default function Settings() {
       setWorkEnd(previousSettings.workEnd)
       setWorkDays(previousSettings.workDays)
       setTimezone(previousSettings.timezone)
-      setEmailReminderOneHour(previousSettings.emailReminderOneHour)
-      setEmailReminderTwentyFourHours(previousSettings.emailReminderTwentyFourHours)
       setNotifyMeetingCreated(previousSettings.notifyMeetingCreated)
       setNotifyMeetingChanged(previousSettings.notifyMeetingChanged)
       setNotifyMeetingCancelled(previousSettings.notifyMeetingCancelled)
@@ -606,46 +588,6 @@ export default function Settings() {
 
               <div className="border rounded-lg p-3 flex flex-col gap-3">
                 <p className="text-sm font-medium">Notifications</p>
-
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm">Email reminder 1 hour before</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEmailReminderOneHour((v) => !v)}
-                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
-                      emailReminderOneHour ? 'bg-primary' : 'bg-muted'
-                    }`}
-                    aria-label="Toggle one-hour email reminders"
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                        emailReminderOneHour ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm">Email reminder 24 hours before</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setEmailReminderTwentyFourHours((v) => !v)}
-                    className={`relative inline-flex h-5 w-9 rounded-full border border-transparent transition-colors ${
-                      emailReminderTwentyFourHours ? 'bg-primary' : 'bg-muted'
-                    }`}
-                    aria-label="Toggle twenty-four-hour email reminders"
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                        emailReminderTwentyFourHours ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
-                  </button>
-                </div>
 
                 <div className="flex items-center justify-between gap-4">
                   <div>

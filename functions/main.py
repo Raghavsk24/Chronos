@@ -379,14 +379,6 @@ def schedule_meeting(req: https_fn.CallableRequest) -> dict:
         }
 
     # --- 3. Run the scheduling algorithm ---
-    print(f'DEBUG participants included ({len(included_members)}): {included_members}')
-    print(f'DEBUG participants ignored  ({len(ignored_members)}): {ignored_members}')
-    for uid in work_hours_by_participant:
-        wh = work_hours_by_participant[uid]
-        wd = work_days_by_participant[uid]
-        bc = len(busy_slots_by_participant.get(uid, []))
-        print(f'DEBUG [{uid}] timezone={wh.get("timezone")} hours={wh["start_hour"]}:{wh["start_minute"]:02d}-{wh["end_hour"]}:{wh["end_minute"]:02d} work_days={wd} busy_slots={bc}')
-    print(f'DEBUG preferences: {preferences}')
     # Keep only participants that are in this meeting and have valid settings + connected calendars.
     filtered_busy = {uid: slots for uid, slots in busy_slots_by_participant.items() if uid in allowed_uids}
     filtered_work_hours = {uid: wh for uid, wh in work_hours_by_participant.items() if uid in allowed_uids}
@@ -489,13 +481,6 @@ def _delete_calendar_event(access_token: str, event_id: str) -> bool:
             return True  # already removed
         print(f'Calendar delete error {e.code}: {e.read().decode()}')
         return False
-    except Exception as e:
-        print(f'Calendar event deletion failed: {e}')
-        return False
-
-
-        return False
-
     except Exception as e:
         print(f'Calendar event deletion failed: {e}')
         return False
@@ -656,14 +641,23 @@ def _book_meeting_impl(
             message='Host must connect Google Calendar before booking a meeting.',
         )
 
-    # Create the host event without Google attendee emails.
-    # Chronos sends the booking confirmation email instead.
+    # Collect all participant emails (excluding host) to add as attendees.
+    # Google Calendar's invitation system places the event on each attendee's
+    # calendar as "needs action" (yes/no/maybe), without requiring each
+    # participant to have their own Google Calendar connected to Chronos.
+    attendee_emails = [
+        m['email'] for m in member_data
+        if m['uid'] != host_uid and m['email']
+    ]
+
+    # Create a single event on the host's calendar with all participants as
+    # attendees. sendUpdates=none suppresses Google's own emails (we use Resend).
     host_event_id = create_event_fn(
         host_token,
         summary,
         slot_start,
         slot_end,
-        [],
+        attendee_emails,
         meeting_link,
         host_entry.get('timezone', 'UTC') if host_entry else 'UTC',
     )
@@ -673,34 +667,7 @@ def _book_meeting_impl(
             message='Failed to create calendar invite event. Meeting was not booked.',
         )
 
-    # Also add the event directly to each participant's own calendar.
-    # Store each event ID so we can delete them later on reschedule/cancel.
     calendar_event_ids: dict[str, str] = {host_uid: host_event_id}
-    ignored_participants: list[str] = []
-    for member in member_data:
-        if member['uid'] == host_uid:
-            continue
-        token = member['token']
-        if not token:
-            ignored_participants.append(member['name'])
-            continue
-        eid = create_event_fn(token, summary, slot_start, slot_end, [], meeting_link, member.get('timezone', 'UTC'))
-        if not eid:
-            # One retry with a fresh token before giving up.
-            fresh = _refresh_access_token(member.get('refresh_token', ''))
-            if fresh:
-                new_token, _ = fresh
-                eid = create_event_fn(new_token, summary, slot_start, slot_end, [], meeting_link, member.get('timezone', 'UTC'))
-                if eid:
-                    db_client.collection('users').document(member['uid']).update({'googleAccessToken': new_token})
-        if not eid:
-            ignored_participants.append(member['name'])
-            print(f'Skipping calendar event for participant {member["name"]}: event creation failed.')
-            continue
-        calendar_event_ids[member['uid']] = eid
-
-    if ignored_participants:
-        print(f'Calendar event skipped for {len(ignored_participants)} participant(s): {", ".join(ignored_participants)}')
 
     # Persist the booking in Firestore.
     db_client.collection('meetings').document(meeting_id).update({
