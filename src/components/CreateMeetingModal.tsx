@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { X } from 'lucide-react'
 import { format } from 'date-fns'
 import { db } from '@/lib/firebase'
+import { isValidMeetingLink } from '@/lib/utils'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -113,6 +114,10 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
 
   const handleCreate = async () => {
     if (!selectedLobbyId || !meetingName.trim() || !user) return
+    if (!isValidMeetingLink(meetingLink)) {
+      toast.error('Meeting link must be a valid URL from a supported platform (Google Meet, Zoom, Teams, etc.).')
+      return
+    }
     setLoading(true)
     try {
       const lobbySnap = await getDoc(doc(db, 'lobbies', selectedLobbyId))
@@ -238,7 +243,17 @@ export default function CreateMeetingModal({ onCreated, defaultLobbyId }: Props)
               </div>
               <div className="flex flex-col gap-1.5 flex-1">
                 <Label htmlFor="m-link">Meeting link</Label>
-                <Input id="m-link" type="url" placeholder="https://meet.google.com/..." value={meetingLink} onChange={(e) => setMeetingLink(e.target.value)} />
+                <Input
+                  id="m-link"
+                  type="url"
+                  placeholder="https://meet.google.com/..."
+                  value={meetingLink}
+                  onChange={(e) => setMeetingLink(e.target.value)}
+                  className={meetingLink && !isValidMeetingLink(meetingLink) ? 'border-destructive focus-visible:ring-destructive' : ''}
+                />
+                {meetingLink && !isValidMeetingLink(meetingLink) && (
+                  <p className="text-xs text-destructive">Must be a Google Meet, Zoom, Teams, or other supported meeting link.</p>
+                )}
               </div>
             </div>
           </div>

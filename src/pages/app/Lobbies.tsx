@@ -1,13 +1,14 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import {
   collection, query, where, getDocs, updateDoc,
-  doc, arrayRemove, writeBatch,
+  doc, arrayRemove,
 } from 'firebase/firestore'
 import { useNavigate } from 'react-router-dom'
 import { Trash2, LogOut, Search, ArrowUpDown } from 'lucide-react'
 import Avatar from '@/components/Avatar'
 import { toast } from 'sonner'
-import { db } from '@/lib/firebase'
+import { db, functions } from '@/lib/firebase'
+import { httpsCallable } from 'firebase/functions'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,6 +21,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
+
+const deleteLobbyFn = httpsCallable(functions, 'delete_lobby')
 
 interface Member {
   uid: string
@@ -136,13 +139,7 @@ export default function Lobbies() {
   const handleDelete = async (lobby: Lobby) => {
     setActing(true)
     try {
-      const meetingsSnap = await getDocs(
-        query(collection(db, 'meetings'), where('lobbyId', '==', lobby.id))
-      )
-      const batch = writeBatch(db)
-      meetingsSnap.docs.forEach((d) => batch.delete(d.ref))
-      batch.delete(doc(db, 'lobbies', lobby.id))
-      await batch.commit()
+      await deleteLobbyFn({ lobbyId: lobby.id })
       setLobbies((prev) => prev.filter((l) => l.id !== lobby.id))
       toast.success('Lobby deleted.')
     } catch {

@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.error
+
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -487,41 +488,50 @@ def _delete_calendar_event(access_token: str, event_id: str) -> bool:
 
 
 def _send_resend_email(to_email: str, subject: str, html: str, reply_to: str | None = None) -> bool:
-    """Send an email via Resend API. Returns False when delivery is unavailable/fails."""
+    """Send an email via the Resend Python SDK. Returns False when delivery is unavailable/fails."""
+    import resend as resend_sdk
+
     api_key = os.environ.get('RESEND_API_KEY', '').strip()
     from_email = os.environ.get('REMINDER_FROM_EMAIL', '').strip()
 
     if not api_key or not from_email:
+        print(f'Resend email skipped (missing env vars): RESEND_API_KEY={bool(api_key)}, REMINDER_FROM_EMAIL={bool(from_email)}')
         return False
 
-    payload_dict = {
+    resend_sdk.api_key = api_key
+
+    params: dict = {
         'from': from_email,
         'to': [to_email],
         'subject': subject,
         'html': html,
     }
     if reply_to:
-        payload_dict['reply_to'] = [reply_to]
-
-    payload = json.dumps(payload_dict).encode('utf-8')
-
-    req = urllib.request.Request(
-        'https://api.resend.com/emails',
-        data=payload,
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-        },
-        method='POST',
-    )
+        params['reply_to'] = [reply_to]
 
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return 200 <= resp.status < 300
+        email = resend_sdk.Emails.send(params)
+        print(f'Resend sent to {to_email}: id={getattr(email, "id", email)}')
+        return True
     except Exception as e:
-        print(f'Reminder email send failed for {to_email}: {e}')
+        print(f'Resend failed for {to_email}: {e}')
         return False
 
+
+
+def _email_footer(notification_type: str) -> str:
+    reason_map = {
+        'created': 'you have meeting invitation notifications enabled',
+        'cancelled': 'you have meeting cancellation notifications enabled',
+        'changed': 'you have meeting change notifications enabled',
+    }
+    reason = reason_map.get(notification_type, 'you have meeting notifications enabled')
+    return (
+        '<hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>'
+        f'<p style="color:#888;font-size:0.85em;">You are receiving this email because {reason} '
+        'in your Chronos settings. To manage your preferences, visit <strong>Settings</strong> at '
+        '<a href="https://usechronos.live">usechronos.live</a>.</p>'
+    )
 
 
 def _build_booking_confirmation_html(
@@ -531,27 +541,59 @@ def _build_booking_confirmation_html(
     meeting_link: str = '',
     participant_names: list[str] | None = None,
     role: str = 'participant',
+    user_timezone: str = 'UTC',
+    lobby_name: str = '',
+    description: str = '',
 ) -> str:
-    start_label = slot_start.strftime('%A, %B ') + str(slot_start.day) + slot_start.strftime(', %Y at %H:%M UTC')
-    end_label = slot_end.strftime('%H:%M UTC')
-    join_html = (
-        f'<p><strong>Join link:</strong> <a href="{meeting_link}">{meeting_link}</a></p>'
-        if meeting_link else ''
-    )
-    if role == 'host':
-        intro = f'<p>You have booked <strong>{meeting_name}</strong>. Invites have been sent to all participants.</p>'
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        tz = ZoneInfo(user_timezone)
+    except (ZoneInfoNotFoundError, Exception):
+        tz = ZoneInfo('UTC')
+    local_start = slot_start.replace(tzinfo=ZoneInfo('UTC')).astimezone(tz)
+    local_end = slot_end.replace(tzinfo=ZoneInfo('UTC')).astimezone(tz)
+    tz_abbr = local_start.strftime('%Z') or user_timezone
+    start_label = local_start.strftime('%A, %B ') + str(local_start.day) + local_start.strftime(f', %Y at %-I:%M %p {tz_abbr}')
+    end_label = local_end.strftime(f'%-I:%M %p {tz_abbr}')
+
+    if meeting_link:
+        join_html = (
+            f'<p><strong style="color:#000000;">Meeting Link:</strong> '
+            f'<a href="{meeting_link}">{meeting_link}</a></p>'
+        )
     else:
-        intro = f"<p>You've been invited to <strong>{meeting_name}</strong>.</p>"
+        join_html = (
+            '<p><strong style="color:#000000;">Meeting Link:</strong> '
+            'No meeting link was added to this meeting.</p>'
+        )
+
+    if role == 'host':
+        intro = f'<p>You have scheduled <strong>{meeting_name}</strong>. Invites have been sent to all participants.</p>'
+    else:
+        intro = f'<p><strong>{meeting_name}</strong> has been scheduled.</p>'
+
+    lobby_html = f'<p><strong style="color:#000000;">Lobby:</strong> {lobby_name}</p>' if lobby_name else ''
+    description_html = f'<p><strong style="color:#000000;">Description:</strong> {description}</p>' if description else ''
+
     participants_html = ''
     if participant_names:
         names_li = ''.join(f'<li>{name}</li>' for name in participant_names)
         participants_html = f'<p><strong>Participants:</strong></p><ul>{names_li}</ul>'
+
+    gcal_html = (
+        '<p><strong style="color:#000000;">View in Google Calendar:</strong> '
+        '<a href="https://calendar.google.com">Open Google Calendar</a></p>'
+    )
+
     return (
         f'{intro}'
+        f'{lobby_html}'
         f'<p><strong>When:</strong> {start_label} – {end_label}</p>'
+        f'{description_html}'
         f'{participants_html}'
         f'{join_html}'
-        '<p>You will receive reminders 24 hours and 1 hour before the meeting.</p>'
+        f'{gcal_html}'
+        f'{_email_footer("created")}'
     )
 
 
@@ -597,6 +639,8 @@ def _book_meeting_impl(
     member_uids: list[str] = meeting.get('memberUids', [])
     summary = meeting.get('name', 'Meeting')
     meeting_link = (meeting.get('meetingLink') or '').strip()
+    lobby_name = (meeting.get('lobbyName') or '').strip()
+    description = (meeting.get('description') or '').strip()
     host_uid: str = meeting.get('hostUid', '')
 
     # Collect each member's email and refreshed access token in one pass.
@@ -612,7 +656,9 @@ def _book_meeting_impl(
         refresh_token: str = udata.get('googleRefreshToken', '')
         token_expires_at = udata.get('tokenExpiresAt')
         display_name: str = (udata.get('displayName') or '').strip() or uid
-        user_timezone: str = (udata.get('settings') or {}).get('timezone') or 'UTC'
+        settings = udata.get('settings') or {}
+        user_timezone: str = settings.get('timezone') or 'UTC'
+        notify_booking: bool = settings.get('notifyMeetingCreated', True)
 
         access_token = _resolve_access_token(db_client, uid, access_token, refresh_token, token_expires_at)
 
@@ -626,6 +672,7 @@ def _book_meeting_impl(
             'refresh_token': refresh_token,
             'name': display_name,
             'timezone': user_timezone,
+            'notify_booking': notify_booking,
         })
 
     if missing_calendar_members:
@@ -678,34 +725,43 @@ def _book_meeting_impl(
     })
 
     # Send booking confirmation to host and invite emails to all participants.
+    print(f'book_meeting sending emails: host={bool(host_email)} participants={len([m for m in member_data if m["uid"] != host_uid and m["email"] and m.get("notify_booking", True)])}')
     try:
         slot_start_dt = datetime.fromisoformat(slot_start)
         slot_end_dt = datetime.fromisoformat(slot_end)
         all_names = [m['name'] for m in member_data if m['name']]
 
-        participant_html = _build_booking_confirmation_html(
-            summary, slot_start_dt, slot_end_dt, meeting_link,
-            participant_names=all_names, role='participant',
-        )
         for member in member_data:
             if member['uid'] == host_uid:
                 continue
-            if member['email']:
+            if member['email'] and member.get('notify_booking', True):
+                html = _build_booking_confirmation_html(
+                    summary, slot_start_dt, slot_end_dt, meeting_link,
+                    participant_names=all_names, role='participant',
+                    user_timezone=member.get('timezone', 'UTC'),
+                    lobby_name=lobby_name,
+                    description=description,
+                )
                 _send_resend_email(
                     member['email'],
                     f"You're invited: {summary}",
-                    participant_html,
+                    html,
                     reply_to=host_email or None,
                 )
 
-        host_html = _build_booking_confirmation_html(
-            summary, slot_start_dt, slot_end_dt, meeting_link,
-            participant_names=all_names, role='host',
-        )
-        if host_email:
+        host_entry_notify = host_entry.get('notify_booking', True) if host_entry else True
+        if host_email and host_entry_notify:
+            host_html = _build_booking_confirmation_html(
+                summary, slot_start_dt, slot_end_dt, meeting_link,
+                participant_names=all_names, role='host',
+                user_timezone=host_entry.get('timezone', 'UTC') if host_entry else 'UTC',
+                lobby_name=lobby_name,
+                description=description,
+            )
             _send_resend_email(host_email, f'Meeting booked: {summary}', host_html)
     except Exception as e:
-        print(f'Booking confirmation email failed: {e}')
+        import traceback
+        print(f'Booking confirmation email failed: {e}\n{traceback.format_exc()}')
 
     return {
         'success': True,
@@ -786,8 +842,9 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
         if access_token:
             _delete_calendar_event(access_token, event_id)
 
-    # Collect member emails for notifications.
+    # Collect member emails and host email for notifications.
     host_email: str = ''
+    host_notify: bool = True
     member_emails: list[str] = []
     for uid in member_uids:
         user_doc = client.collection('users').document(uid).get()
@@ -798,30 +855,56 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
         email = (udata.get('email') or '').strip()
         if uid == host_uid:
             host_email = email
+            if action == 'cancel':
+                host_notify = settings.get('notifyMeetingCancelled', True)
+            else:
+                host_notify = settings.get('notifyMeetingChanged', True)
             continue
         if not email:
             continue
         if action == 'cancel' and not settings.get('notifyMeetingCancelled', True):
             continue
+        if action == 'rebook' and not settings.get('notifyMeetingChanged', True):
+            continue
         member_emails.append(email)
+
+    print(f'cancel_booking action={action} host_email={bool(host_email)} host_notify={host_notify} member_count={len(member_emails)}')
 
     # Send notification emails.
     try:
         if action == 'rebook':
-            subject = f'Meeting rescheduled: {summary}'
-            html = (
-                f'<p>The meeting <strong>{summary}</strong> is being rescheduled.</p>'
-                f'<p>The host is selecting a new time. You will receive a confirmation once booked.</p>'
-                + (f'<p><strong>Join link:</strong> <a href="{meeting_link}">{meeting_link}</a></p>' if meeting_link else '')
+            subject = f'Meeting time reset: {summary}'
+            participant_html = (
+                f'<p>The booking for <strong>{summary}</strong> has been reset.</p>'
+                f'<p>The host is selecting a new time. You will receive another email once a new time is confirmed.</p>'
+                f'{_email_footer("changed")}'
+            )
+            host_html = (
+                f'<p>You have reset the booking for <strong>{summary}</strong>.</p>'
+                f'<p>Return to the meeting page on Chronos to select a new time.</p>'
+                f'{_email_footer("changed")}'
             )
         else:
             subject = f'Meeting cancelled: {summary}'
-            html = f'<p>The meeting <strong>{summary}</strong> has been cancelled.</p>'
+            participant_html = (
+                f'<p><strong>{summary}</strong> has been cancelled by the host.</p>'
+                f'<p>You have been removed from this meeting.</p>'
+                f'{_email_footer("cancelled")}'
+            )
+            host_html = (
+                f'<p>You have cancelled <strong>{summary}</strong>.</p>'
+                f'<p>All participants have been notified and removed from the meeting.</p>'
+                f'{_email_footer("cancelled")}'
+            )
 
         for email in member_emails:
-            _send_resend_email(email, subject, html, reply_to=host_email or None)
+            _send_resend_email(email, subject, participant_html, reply_to=host_email or None)
+
+        if host_email and host_notify:
+            _send_resend_email(host_email, subject, host_html)
     except Exception as e:
-        print(f'Cancel/rebook notification email failed: {e}')
+        import traceback
+        print(f'Cancel/rebook notification email failed: {e}\n{traceback.format_exc()}')
 
     # Update or delete the Firestore meeting document.
     if action == 'rebook':
@@ -835,6 +918,46 @@ def cancel_booking(req: https_fn.CallableRequest) -> dict:
 
     return {'success': True}
 
+
+
+@https_fn.on_call()
+def delete_lobby(req: https_fn.CallableRequest) -> dict:
+    """Delete a lobby and all its meetings. Only the lobby host may call this."""
+    if req.auth is None:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.UNAUTHENTICATED,
+            message='You must be signed in.',
+        )
+
+    lobby_id: str = (req.data.get('lobbyId') or '').strip()
+    if not lobby_id:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.INVALID_ARGUMENT,
+            message='lobbyId is required.',
+        )
+
+    client = _get_db()
+    lobby_doc = client.collection('lobbies').document(lobby_id).get()
+    if not lobby_doc.exists:
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.NOT_FOUND,
+            message='Lobby not found.',
+        )
+
+    if req.auth.uid != (lobby_doc.to_dict() or {}).get('hostUid'):
+        raise https_fn.HttpsError(
+            code=https_fn.FunctionsErrorCode.PERMISSION_DENIED,
+            message='Only the lobby host can delete the lobby.',
+        )
+
+    meetings = client.collection('meetings').where('lobbyId', '==', lobby_id).stream()
+    batch = client.batch()
+    for meeting in meetings:
+        batch.delete(meeting.reference)
+    batch.delete(client.collection('lobbies').document(lobby_id))
+    batch.commit()
+
+    return {'success': True}
 
 
 @https_fn.on_call()

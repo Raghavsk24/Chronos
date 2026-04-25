@@ -6,6 +6,7 @@ import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { ArrowLeft, ExternalLink, CheckCircle2, CircleHelp, Settings, Trash2, LogOut, RotateCcw, X, CirclePlus, XCircle } from 'lucide-react'
 import { db, functions } from '@/lib/firebase'
+import { isValidMeetingLink } from '@/lib/utils'
 import { connectGoogleCalendar } from '@/lib/googleCalendarAuth'
 import { useAuthStore } from '@/store/authStore'
 import Avatar from '@/components/Avatar'
@@ -469,6 +470,10 @@ export default function MeetingDetail() {
 
   const handleSaveSettings = async () => {
     if (!meeting || !settingsForm.name.trim()) return
+    if (!isValidMeetingLink(settingsForm.meetingLink)) {
+      toast.error('Meeting link must be a valid URL from a supported platform (Google Meet, Zoom, Teams, etc.).')
+      return
+    }
     setSavingSettings(true)
     try {
       const payload = {
@@ -870,7 +875,7 @@ export default function MeetingDetail() {
               {meeting.members.map((member, idx) => {
                 const isHostMember = member.uid === meeting.hostUid
                 const isMe = member.uid === user?.uid
-                const connected = calendarConnectionByUid[member.uid]
+                const connected = calendarConnectionByUid[member.uid] ?? true
                 const memberDeclined = meeting.declinedByUids?.includes(member.uid) ?? false
 
                 return (
@@ -978,7 +983,11 @@ export default function MeetingDetail() {
                   value={settingsForm.meetingLink}
                   onChange={(e) => setSettingsForm((prev) => ({ ...prev, meetingLink: e.target.value }))}
                   placeholder="https://meet.google.com/..."
+                  className={settingsForm.meetingLink && !isValidMeetingLink(settingsForm.meetingLink) ? 'border-destructive focus-visible:ring-destructive' : ''}
                 />
+                {settingsForm.meetingLink && !isValidMeetingLink(settingsForm.meetingLink) && (
+                  <p className="text-xs text-destructive">Must be a Google Meet, Zoom, Teams, or other supported meeting link.</p>
+                )}
               </div>
             </div>
 
