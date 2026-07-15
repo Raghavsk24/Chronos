@@ -192,3 +192,6 @@ npm run dev
 ```bash
 firebase deploy --only hosting,functions,firestore
 ```
+
+## License
+MIT
