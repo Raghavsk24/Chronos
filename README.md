@@ -1,6 +1,6 @@
 # Chronos
 
-Chronos is a full-stack web application that automatically schedules meetings on Google Calendar for large groups. It achieves this by connecting to each participant's Google Calendar, analyzing availability across the group and ranking candidate time slots using a multi-factor scoring algorithm. Chrons won the ***2025 Congressional App Challenge for Arizona District 8.***
+Chronos is a full-stack web application that automatically schedules meetings on Google Calendar for large groups. It achieves this by connecting to each participant's Google Calendar, analyzing availability across the group and ranking candidate time slots using a multi-factor scoring algorithm. Chronos won the ***2025 Congressional App Challenge.***
 
 - **Live App:** https://usechronos.live
 - **News Article:** https://hamadeh.house.gov/news/documentsingle.aspx?DocumentID=360
