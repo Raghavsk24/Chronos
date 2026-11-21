@@ -1,160 +1,156 @@
 # Chronos
 
-Chronos is a full-stack web application that automatically schedules meetings on Google Calendar for large groups. It achieves this by connecting to each participant's Google Calendar, analyzing availability across the group and ranking candidate time slots using a multi-factor scoring algorithm. Chronos won the ***2025 Congressional App Challenge.***
+Chronos finds a meeting time that works for everyone in a large group, then books it. A host creates a lobby, invites the people who need to meet, and starts scheduling for a meeting. Chronos reads each member's Google Calendar and work hours across the next month and suggests the five best open slots. When the host picks one, the meeting is added to every member's calendar and everyone is emailed a confirmation. Chronos won the ***2025 Congressional App Challenge***.
 
 - **Live App:** https://usechronos.live
-- **News Article:** https://hamadeh.house.gov/news/documentsingle.aspx?DocumentID=360
+- **Congressional App Challenge Article:** https://hamadeh.house.gov/news/documentsingle.aspx?DocumentID=360
 
-<p>
-  <img width=49% height=49%  alt="Screenshot 2026-04-21 222948" src="https://github.com/user-attachments/assets/3a6a42e6-0604-4ba6-967d-6f895f166255" />
-  <img width=49% height=49% alt="Screenshot 2026-04-21 113730" src="https://github.com/user-attachments/assets/04e67086-0890-4904-b0e1-68fc90415d07" />
-</p>
-<p>
-  <img width=49% height=49% alt="Screenshot 2026-04-25 132822" src="https://github.com/user-attachments/assets/9e2f4ce7-7969-425a-b774-16e3cd96caed" />
-  <img width=49% height=49% alt="Screenshot 2026-04-25 132848" src="https://github.com/user-attachments/assets/a7d46bab-3b7c-40d8-a6e4-5d6417347dd7" />
+<br>
 
-
-
-</p>
+<table>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/3a6a42e6-0604-4ba6-967d-6f895f166255" alt="Chronos screenshot 1" width="100%"></td>
+    <td><img src="https://github.com/user-attachments/assets/04e67086-0890-4904-b0e1-68fc90415d07" alt="Chronos screenshot 2" width="100%"></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/ecc93f28-6baa-4770-a071-bca9b9a9e71b" alt="Chronos screenshot 3" width="100%"></td>
+    <td><img src="https://github.com/user-attachments/assets/11cfa6d2-8915-4370-99d7-9a31145472f7" alt="Chronos screenshot 4" width="100%"></td>
+  </tr>
+</table>
 
 ## Tech Stack
 
-### Frontend
+<div align="center">
 
-![React](https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white)
-![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
-![shadcn/ui](https://img.shields.io/badge/shadcn%2Fui-000000?style=for-the-badge&logo=shadcnui&logoColor=white)
-![Zustand](https://img.shields.io/badge/Zustand-443E38?style=for-the-badge&logo=react&logoColor=white)
-![Sonner](https://img.shields.io/badge/Sonner-000000?style=for-the-badge&logo=npm&logoColor=white)
+![HTML5](https://img.shields.io/badge/HTML5-E34F26?style=for-the-badge&logo=html5&logoColor=white) ![CSS3](https://img.shields.io/badge/CSS3-1572B6?style=for-the-badge&logo=css&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white) ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
 
-### Backend
+![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E) ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white) ![shadcn/ui](https://img.shields.io/badge/shadcn%2Fui-000000?style=for-the-badge&logo=shadcnui&logoColor=white) ![React Router](https://img.shields.io/badge/React_Router-CA4245?style=for-the-badge&logo=react-router&logoColor=white) ![Node.js](https://img.shields.io/badge/Node%20js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white) ![npm](https://img.shields.io/badge/npm-CB3837?style=for-the-badge&logo=npm&logoColor=white)
 
-![Python](https://img.shields.io/badge/Python_3.11-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Firebase Functions](https://img.shields.io/badge/Firebase_Functions-FF6F00?style=for-the-badge&logo=firebase&logoColor=white)
-![Google Calendar API](https://img.shields.io/badge/Google_Calendar_API-4285F4?style=for-the-badge&logo=google-calendar&logoColor=white)
-![Resend](https://img.shields.io/badge/Resend-000000?style=for-the-badge&logo=mail&logoColor=white)
-![Sentry](https://img.shields.io/badge/Sentry-362D59?style=for-the-badge&logo=sentry&logoColor=white)
+![Python](https://img.shields.io/badge/Python-FFD43B?style=for-the-badge&logo=python&logoColor=blue) ![Firebase](https://img.shields.io/badge/firebase-ffca28?style=for-the-badge&logo=firebase&logoColor=black) ![Google Cloud](https://img.shields.io/badge/Google_Cloud-4285F4?style=for-the-badge&logo=google-cloud&logoColor=white) ![Sentry](https://img.shields.io/badge/Sentry-black?style=for-the-badge&logo=Sentry&logoColor=#362D59) ![PyPI](https://img.shields.io/badge/pypi-3775A9?style=for-the-badge&logo=pypi&logoColor=white) ![PyTest](https://img.shields.io/badge/PyTest-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 
-### Infrastructure
+![ESLint](https://img.shields.io/badge/eslint-3A33D1?style=for-the-badge&logo=eslint&logoColor=white) ![Git](https://img.shields.io/badge/GIT-E44C30?style=for-the-badge&logo=git&logoColor=white) ![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white) ![Windows](https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white) ![Claude](https://img.shields.io/badge/Claude-D97757?style=for-the-badge&logo=claude&logoColor=white)
 
-![Firebase Auth](https://img.shields.io/badge/Firebase_Auth-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
-![Firestore](https://img.shields.io/badge/Firestore-FF6F00?style=for-the-badge&logo=firebase&logoColor=white)
-![Firebase Hosting](https://img.shields.io/badge/Firebase_Hosting-FFA000?style=for-the-badge&logo=firebase&logoColor=white)
-![Google Cloud](https://img.shields.io/badge/Google_Cloud-4285F4?style=for-the-badge&logo=google-cloud&logoColor=white)
+</div>
 
+## System Overview
 
-## Scheduling Algorithm
+```
+ React + Vite web app  (Firebase Hosting)
+ lobbies · meetings · calendar · settings
+        │                        │
+        │ Firebase Auth +        │ httpsCallable
+        │ Firestore SDK          ▼
+        │       ┌────────────────────────────────────────────────────┐
+        │       │  Cloud Functions  (Python 3.11)                    │
+        │       │    schedule_meeting ──► top 5 slots (algorithm.py) │
+        │       │    book_meeting     ──► events + confirmation mail │
+        │       │    cancel_booking   ──► removes events, notifies   │
+        │       └────────────────────────────────────────────────────┘
+        ▼               │                  │                   │
+   Firestore ◄──────────┘                  ▼                   ▼
+   users · lobbies · meetings    Google Calendar API       Resend API
+                                 FreeBusy + events         booking emails
+```
 
-The algorithm lives in `functions/scheduling/algorithm.py` and runs inside the `schedule_meeting` Cloud Function.
+## How it Works
+
+The scheduling logic lives in `functions/scheduling/algorithm.py` and runs inside the `schedule_meeting` Cloud Function.
 
 ### Step 1: Collect availability
 
-For each participant with a connected Google Calendar, the backend calls the Google Calendar FreeBusy API to fetch their busy intervals over the next 4 weeks.
+When the host runs scheduling, the function refreshes each member's Google token if it has expired. It then asks the Google Calendar FreeBusy API for their busy intervals, from one hour from now to one month out. Only busy times are fetched, never event details.
 
 ### Step 2: Compute the shared work window
 
-Each participant stores their work hours (start/end time + timezone) and work days in Firestore. The algorithm:
+Each member stores work hours, a timezone, and work days. For every day in the search range, the algorithm:
 
-- Converts every participant's work hours to UTC using their timezone
-- Takes the **latest start** and **earliest end** across all participants as the shared window for each day
-- Takes the **intersection of work days** so only days everyone works are considered
+- Keeps the day only if it is a work day for every member
+- Converts each member's work hours to UTC using their timezone
+- Takes the **latest start** and the **earliest end** as the shared window, and stops with an error if no day's window fits the meeting
 
 ### Step 3: Find candidate slots
 
-For each valid working day, the algorithm steps through the shared window in 15-minute increments. Each candidate slot is checked against all participants' busy intervals, expanded by each person's configured buffer time (default 15 minutes). A slot is only kept if it is conflict-free for everyone and starts at least 1 hour from now.
+The algorithm walks each shared window in 15-minute steps and keeps a slot only if it is free for every member, plus 30 extra minutes after the meeting when the host turns on extra buffer. With target dates, it searches outward from each target (the same day, then a day on either side, and so on) until it has 10 candidates per target. Without them, it collects 10 candidates from the earliest days.
 
 ### Step 4: Score each slot
 
-Every passing slot receives three component scores:
+Every candidate gets three scores between 0 and 1, combined with fixed weights:
 
-**Position score (15% of total score):** The work window is divided into three equal thirds: morning, midday and afternoon. The score peaks at the center of the preferred third and decays linearly toward 0 at the opposite end.
+**Proximity:** 1 on a target date, halving with each day away. Without target dates every slot gets 1.
 
-**Buffer score (15% of total score):** Measures how much free time surrounds the slot for each participant. The gap between the slot and the nearest adjacent event on each side is measured and normalised to 0–1 (120 minutes of free time = full score of 1.0).
+**Position:** the shared window splits into morning, afternoon, and evening thirds. The host's preferred third scores 1, a neighboring third 0.5, and the opposite third 0.25.
 
-**Proximity score (70% of total score):** When the user specifies a target date, every slot receives a proximity score calculated as:
+**Buffer:** the slot is widened by 5, 10, 15, 30, 45, and 60 minutes in turn until it hits a conflict. Clearing all six scores 1, and each step fewer scores less. A slot that clears none is dropped.
 
-```
-proximity = 1 / (1 + days_away_from_target)
-```
-
-**Final score:**
-
-```
-score = 0.7 * proximity_score + 0.15 * position_score + 0.15 * buffer_score
+```python
+score = 0.5 * proximity_score + 0.35 * position_score + 0.15 * buffer_score
 ```
 
 ### Step 5: Return ranked slots
 
-The top 5 ranked slots are returned. 
+Candidates are sorted by score, with earlier start times breaking ties, and the top 5 go back to the host. Each slot arrives with its three component scores, so the host sees why it ranked where it did. If nothing qualifies, the host gets a clear message to free up calendar time or change the target date, instead of an empty list.
 
+### Step 6: Book the meeting
+
+When the host picks a slot, `book_meeting` creates the event on every member's Google Calendar and saves the event IDs, so a reschedule or cancellation can remove them later. Each member is then emailed a confirmation through Resend.
 
 ## Getting Started
 
-### Prerequisites
+**1. Set up the accounts and tools**
 
-- **Node.js 18+** — [nodejs.org](https://nodejs.org)
-- **Python 3.11** — [python.org](https://python.org)
-- **Firebase CLI** — `npm install -g firebase-tools`, then `firebase login`
-- **Firebase project** with Auth, Firestore, Functions, and Hosting enabled — [console.firebase.google.com](https://console.firebase.google.com)
-- **Google Cloud OAuth 2.0 client** with the Google Calendar API enabled — [console.cloud.google.com](https://console.cloud.google.com)
-- **Resend account** with a verified sending domain — [resend.com](https://resend.com)
-- **Sentry account** (optional, for error monitoring) — [sentry.io](https://sentry.io)
+You need Node.js, Python 3.11, and the Firebase CLI (`npm install -g firebase-tools`). Chronos also depends on four outside services: a Firebase project with Auth, Firestore, Functions, and Hosting enabled; a Google Cloud OAuth client with the Google Calendar API enabled and `http://localhost:5173/auth/google/callback` as a redirect URI; a Resend account with a verified sending domain; and, optionally, a Sentry project for error monitoring.
 
-
-### 1. Clone the repository
+**2. Clone the repository**
 
 ```bash
 git clone https://github.com/Raghavsk24/Chronos.git
 cd Chronos
 ```
 
+**3. Add your environment variables**
 
-### 2. Frontend environment variables
+Copy both templates and fill in the Firebase web config, the OAuth client, and your Resend key. Also add `VITE_GOOGLE_CLIENT_ID` to `.env.local`, since the template leaves it out.
+
+*macOS / Linux:*
 
 ```bash
 cp .env.example .env.local
+cp functions/.env.example functions/.env
 ```
 
-Fill in `.env.local`:
+*Windows:*
+
+```powershell
+copy .env.example .env.local
+copy functions\.env.example functions\.env
+```
+
+The two files use these names:
 
 ```env
+# .env.local
 VITE_FIREBASE_API_KEY=
 VITE_FIREBASE_AUTH_DOMAIN=
 VITE_FIREBASE_PROJECT_ID=
 VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
+VITE_GOOGLE_CLIENT_ID=
 VITE_SENTRY_DSN=
-```
 
-
-### 3. Backend environment variables
-
-Create `functions/.env`:
-
-```env
+# functions/.env
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 RESEND_API_KEY=
-REMINDER_FROM_EMAIL=you@yourdomain.com
-SENTRY_DSN=
+REMINDER_FROM_EMAIL=
 ```
 
+**4. Install dependencies**
 
-### 4. Install frontend dependencies
+*macOS / Linux:*
 
 ```bash
 npm install
-```
-
-
-### 5. Set up the Python virtual environment
-
-**macOS / Linux:**
-
-```bash
 cd functions
 python3.11 -m venv venv
 source venv/bin/activate
@@ -162,34 +158,39 @@ pip install -r requirements.txt
 cd ..
 ```
 
-**Windows:**
+*Windows:*
 
-```bash
+```powershell
+npm install
 cd functions
 python -m venv venv
-venv\Scripts\pip install -r requirements.txt
+venv\Scripts\activate
+pip install -r requirements.txt
 cd ..
 ```
 
+**5. Connect Firebase and deploy the backend**
 
-### 6. Connect the Firebase project
+The web app calls the deployed Cloud Functions even when it runs locally, so deploy the functions and Firestore rules once before the first run.
 
 ```bash
+firebase login
 firebase use --add
+firebase deploy --only functions,firestore
 ```
 
-Select your Firebase project from the list.
+**6. Run the app**
 
-
-### 7. Run locally
+*Local:*
 
 ```bash
 npm run dev
 ```
 
-### 8. Deploy to production
+*Production:*
 
 ```bash
+npm run build
 firebase deploy --only hosting,functions,firestore
 ```
 
