@@ -3,7 +3,7 @@
 Chronos finds a meeting time that works for everyone in a large group, then books it. A host creates a lobby, invites the people who need to meet, and starts scheduling for a meeting. Chronos reads each member's Google Calendar and work hours across the next month and suggests the five best open slots. When the host picks one, the meeting is added to every member's calendar and everyone is emailed a confirmation. Chronos won the ***2025 Congressional App Challenge***.
 
 - **Live App:** https://usechronos.live
-- **Congressional App Challenge Article:** https://hamadeh.house.gov/news/documentsingle.aspx?DocumentID=360
+- **Congressional App Challenge Win:** https://hamadeh.house.gov/news/documentsingle.aspx?DocumentID=360
 
 <br>
 
